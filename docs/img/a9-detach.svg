@@ -1,0 +1,13 @@
+<svg class="ill" viewBox="0 0 360 130" width="720" height="260" role="img" aria-label="Remove the source links and point the GUI at the new database" xmlns="http://www.w3.org/2000/svg"><style>
+  .ill{background:#f2f4f5}
+  text{font-family:Consolas,"IBM Plex Mono","Courier New",monospace;font-size:9.5px;fill:#142029}
+  text.lbl{font-family:"Barlow Condensed","Arial Narrow",Arial,sans-serif;font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+  text.mut{fill:#5b6a75} text.acc{fill:#0b7f86} text.ok{fill:#2f7d3b} text.bad{fill:#a23a2a}
+  .s{fill:#ffffff;stroke:#0b7f86;stroke-width:1.6} .s2{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.6}
+  .sf{fill:#0b7f86;stroke:#0b7f86;stroke-width:1.6} .n{fill:#ffffff;stroke:#5b6a75;stroke-width:1.2}
+  .x{fill:#f2f4f5;stroke:#5b6a75;stroke-width:1;stroke-dasharray:3 2}
+  .ln{fill:none;stroke:#5b6a75;stroke-width:1.6} .lna{fill:none;stroke:#0b7f86;stroke-width:2}
+  .dash{fill:none;stroke:#0b7f86;stroke-width:1.6;stroke-dasharray:4 3} .hd{fill:#5b6a75} .hda{fill:#0b7f86}
+  .okl{fill:none;stroke:#2f7d3b;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+  .badl{fill:none;stroke:#a23a2a;stroke-width:2.4;stroke-linecap:round}
+  .cA{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.2} .cB{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.2}</style><rect width="360" height="130" fill="#f2f4f5"/><path class="s2" d="M60 29.5V84.5A32 11.5 0 0 0 124 84.5V29.5Z"/><ellipse class="s2" cx="92" cy="29.5" rx="32" ry="11.5"/><text x="92" y="116" class="mut" text-anchor="middle">MtrMigration_Consolidated</text><path class="dash" d="M140 36H236"/><path class="badl" d="M183 31l10 10M193 31l-10 10"/><text x="188" y="22" class="mut" text-anchor="middle">source links removed</text><path class="lna" d="M128 82L218 82"/><path class="hda" d="M218 82L211.7 85.0L211.7 79.0Z"/><text x="172" y="74" class="mut" text-anchor="middle">connection string</text><rect class="s" x="222" y="52" width="126" height="64" rx="3"/><rect class="sf" x="222" y="52" width="126" height="12" rx="0"/><text x="285" y="92" class="lbl" text-anchor="middle">phase3 GUI</text></svg>

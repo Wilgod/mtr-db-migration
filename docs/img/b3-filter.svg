@@ -1,0 +1,13 @@
+<svg class="ill" viewBox="0 0 360 130" width="720" height="260" role="img" aria-label="Skip folder rows and old versions" xmlns="http://www.w3.org/2000/svg"><style>
+  .ill{background:#f2f4f5}
+  text{font-family:Consolas,"IBM Plex Mono","Courier New",monospace;font-size:9.5px;fill:#142029}
+  text.lbl{font-family:"Barlow Condensed","Arial Narrow",Arial,sans-serif;font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+  text.mut{fill:#5b6a75} text.acc{fill:#b8650a} text.ok{fill:#2f7d3b} text.bad{fill:#a23a2a}
+  .s{fill:#ffffff;stroke:#b8650a;stroke-width:1.6} .s2{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.6}
+  .sf{fill:#b8650a;stroke:#b8650a;stroke-width:1.6} .n{fill:#ffffff;stroke:#5b6a75;stroke-width:1.2}
+  .x{fill:#f2f4f5;stroke:#5b6a75;stroke-width:1;stroke-dasharray:3 2}
+  .ln{fill:none;stroke:#5b6a75;stroke-width:1.6} .lna{fill:none;stroke:#b8650a;stroke-width:2}
+  .dash{fill:none;stroke:#b8650a;stroke-width:1.6;stroke-dasharray:4 3} .hd{fill:#5b6a75} .hda{fill:#b8650a}
+  .okl{fill:none;stroke:#2f7d3b;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+  .badl{fill:none;stroke:#a23a2a;stroke-width:2.4;stroke-linecap:round}
+  .cA{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.2} .cB{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.2}</style><rect width="360" height="130" fill="#f2f4f5"/><rect class="s" x="12" y="10" width="58" height="16" rx="3"/><text x="41" y="22" text-anchor="middle">file</text><rect class="n" x="12" y="32" width="58" height="16" rx="3"/><text x="41" y="44" class="mut" text-anchor="middle">folder</text><rect class="s" x="12" y="54" width="58" height="16" rx="3"/><text x="41" y="66" text-anchor="middle">file</text><rect class="n" x="12" y="76" width="58" height="16" rx="3"/><text x="41" y="88" class="mut" text-anchor="middle">v2.0</text><rect class="s" x="12" y="98" width="58" height="16" rx="3"/><text x="41" y="110" text-anchor="middle">file</text><path class="ln" d="M74 54L104 54"/><path class="hd" d="M104 54L97.7 57.0L97.7 51.0Z"/><path class="s2" d="M108 14H196L164 58V96L140 108V58Z"/><path class="lna" d="M200 54L228 54"/><path class="hda" d="M228 54L221.7 57.0L221.7 51.0Z"/><rect class="s" x="232" y="22" width="58" height="16" rx="3"/><text x="261" y="34" text-anchor="middle">file</text><rect class="s" x="232" y="44" width="58" height="16" rx="3"/><text x="261" y="56" text-anchor="middle">file</text><rect class="s" x="232" y="66" width="58" height="16" rx="3"/><text x="261" y="78" text-anchor="middle">file</text><path class="badl" d="M221 101l10 10M231 101l-10 10"/><text x="238" y="110" class="bad" text-anchor="start">skipped: folder,</text><text x="238" y="122" class="bad" text-anchor="start">old version</text></svg>

@@ -1,0 +1,13 @@
+<svg class="ill" viewBox="0 0 360 130" width="720" height="260" role="img" aria-label="Add indexes, foreign keys, SiteId triggers and reset sequences" xmlns="http://www.w3.org/2000/svg"><style>
+  .ill{background:#f2f4f5}
+  text{font-family:Consolas,"IBM Plex Mono","Courier New",monospace;font-size:9.5px;fill:#142029}
+  text.lbl{font-family:"Barlow Condensed","Arial Narrow",Arial,sans-serif;font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+  text.mut{fill:#5b6a75} text.acc{fill:#0b7f86} text.ok{fill:#2f7d3b} text.bad{fill:#a23a2a}
+  .s{fill:#ffffff;stroke:#0b7f86;stroke-width:1.6} .s2{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.6}
+  .sf{fill:#0b7f86;stroke:#0b7f86;stroke-width:1.6} .n{fill:#ffffff;stroke:#5b6a75;stroke-width:1.2}
+  .x{fill:#f2f4f5;stroke:#5b6a75;stroke-width:1;stroke-dasharray:3 2}
+  .ln{fill:none;stroke:#5b6a75;stroke-width:1.6} .lna{fill:none;stroke:#0b7f86;stroke-width:2}
+  .dash{fill:none;stroke:#0b7f86;stroke-width:1.6;stroke-dasharray:4 3} .hd{fill:#5b6a75} .hda{fill:#0b7f86}
+  .okl{fill:none;stroke:#2f7d3b;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+  .badl{fill:none;stroke:#a23a2a;stroke-width:2.4;stroke-linecap:round}
+  .cA{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.2} .cB{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.2}</style><rect width="360" height="130" fill="#f2f4f5"/><path class="s2" d="M16 31.9V88.1A33 11.9 0 0 0 82 88.1V31.9Z"/><ellipse class="s2" cx="49" cy="31.9" rx="33" ry="11.9"/><text x="49" y="118" class="mut" text-anchor="middle">merged DB</text><path class="lna" d="M84 30H112M84 60H112M84 90H112"/><rect class="s" x="114" y="17" width="236" height="26" rx="3"/><text x="124" y="34" text-anchor="start">73 indexes + SiteId on 13 tables</text><rect class="s" x="114" y="47" width="236" height="26" rx="3"/><text x="124" y="64" text-anchor="start">foreign keys catch any orphan row</text><rect class="s" x="114" y="77" width="236" height="26" rx="3"/><text x="124" y="94" text-anchor="start">sequences continue after max ID</text></svg>

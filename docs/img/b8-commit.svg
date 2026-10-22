@@ -1,0 +1,13 @@
+<svg class="ill" viewBox="0 0 360 130" width="720" height="260" role="img" aria-label="Commit everything at once and write the unmatched report" xmlns="http://www.w3.org/2000/svg"><style>
+  .ill{background:#f2f4f5}
+  text{font-family:Consolas,"IBM Plex Mono","Courier New",monospace;font-size:9.5px;fill:#142029}
+  text.lbl{font-family:"Barlow Condensed","Arial Narrow",Arial,sans-serif;font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+  text.mut{fill:#5b6a75} text.acc{fill:#b8650a} text.ok{fill:#2f7d3b} text.bad{fill:#a23a2a}
+  .s{fill:#ffffff;stroke:#b8650a;stroke-width:1.6} .s2{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.6}
+  .sf{fill:#b8650a;stroke:#b8650a;stroke-width:1.6} .n{fill:#ffffff;stroke:#5b6a75;stroke-width:1.2}
+  .x{fill:#f2f4f5;stroke:#5b6a75;stroke-width:1;stroke-dasharray:3 2}
+  .ln{fill:none;stroke:#5b6a75;stroke-width:1.6} .lna{fill:none;stroke:#b8650a;stroke-width:2}
+  .dash{fill:none;stroke:#b8650a;stroke-width:1.6;stroke-dasharray:4 3} .hd{fill:#5b6a75} .hda{fill:#b8650a}
+  .okl{fill:none;stroke:#2f7d3b;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+  .badl{fill:none;stroke:#a23a2a;stroke-width:2.4;stroke-linecap:round}
+  .cA{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.2} .cB{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.2}</style><rect width="360" height="130" fill="#f2f4f5"/><rect class="s2" x="40" y="46" width="56" height="44" rx="6"/><path class="lna" d="M52 46V34a16 16 0 0 1 32 0v12"/><path class="okl" d="M62 66l4 4 8-9"/><text x="68" y="110" class="lbl acc" text-anchor="middle">COMMIT</text><text x="178" y="54" class="bad" text-anchor="middle">any error:</text><text x="178" y="68" class="mut" text-anchor="middle">rollback,</text><text x="178" y="82" class="mut" text-anchor="middle">nothing changed</text><path class="s" d="M262 24h41l9 9V86H262Z"/><path class="ln" d="M303 24v9h9"/><path class="ln" d="M268 42h36"/><path class="ln" d="M268 51h36"/><path class="ln" d="M268 60h36"/><text x="287" y="104" class="mut" text-anchor="middle">unmatched_*.csv</text></svg>

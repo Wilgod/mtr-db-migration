@@ -1,0 +1,54 @@
+postgres@hqscwpd001v:~$ psql
+psql (18.1)
+Type "help" for help.
+
+postgres=# \l+
+postgres=# quit
+postgres@hqscwpd001v:~$ psql
+psql (18.1)
+Type "help" for help.
+
+postgres=# CREATE DATABASE cwp2 OWNER cwppsvc;
+CREATE DATABASE
+postgres=# CREATE DATABASE cwp_procon OWNER cwppsvc;
+CREATE DATABASE
+postgres=# CREATE DATABASE cwp_opspj OWNER cwppsvc;
+CREATE DATABASE
+postgres=# CREATE DATABASE cwp_opspj2 OWNER cwppsvc;
+CREATE DATABASE
+postgres=# CREATE DATABASE cwp_opspj3 OWNER cwppsvc;
+CREATE DATABASE
+postgres=# CREATE DATABASE cwp_opspj4 OWNER cwppsvc;
+CREATE DATABASE
+postgres=#
+postgres=# GRANT CONNECT ON DATABASE cwp2 TO "cwp_mig_prd";
+GRANT
+postgres=# GRANT TEMPORARY ON DATABASE cwp2 TO "cwp_mig_prd";
+GRANT
+postgres=#
+postgres=# GRANT CONNECT ON DATABASE cwp_procon TO "cwp_mig_prd";
+GRANT
+postgres=# GRANT TEMPORARY ON DATABASE cwp_procon TO "cwp_mig_prd";
+GRANT
+postgres=#
+postgres=# GRANT CONNECT ON DATABASE cwp_opspj TO "cwp_mig_prd";
+GRANT
+postgres=# GRANT TEMPORARY ON DATABASE cwp_opspj TO "cwp_mig_prd";
+GRANT
+postgres=#
+postgres=# GRANT CONNECT ON DATABASE cwp_opspj2 TO "cwp_mig_prd";
+GRANT
+postgres=# GRANT TEMPORARY ON DATABASE cwp_opspj2 TO "cwp_mig_prd";
+GRANT
+postgres=#
+postgres=# GRANT CONNECT ON DATABASE cwp_opspj3 TO "cwp_mig_prd";
+GRANT
+postgres=# GRANT TEMPORARY ON DATABASE cwp_opspj3 TO "cwp_mig_prd";
+GRANT
+postgres=#
+postgres=# GRANT CONNECT ON DATABASE cwp_opspj4 TO "cwp_mig_prd";
+GRANT
+postgres=# GRANT TEMPORARY ON DATABASE cwp_opspj4 TO "cwp_mig_prd";
+GRANT
+postgres=# quit
+postgres@hqscwpd001v:~$ 

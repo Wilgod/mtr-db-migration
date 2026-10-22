@@ -1,0 +1,13 @@
+<svg class="ill" viewBox="0 0 360 130" width="720" height="260" role="img" aria-label="Replace the file's vertical rows for the uploaded keys" xmlns="http://www.w3.org/2000/svg"><style>
+  .ill{background:#f2f4f5}
+  text{font-family:Consolas,"IBM Plex Mono","Courier New",monospace;font-size:9.5px;fill:#142029}
+  text.lbl{font-family:"Barlow Condensed","Arial Narrow",Arial,sans-serif;font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+  text.mut{fill:#5b6a75} text.acc{fill:#b8650a} text.ok{fill:#2f7d3b} text.bad{fill:#a23a2a}
+  .s{fill:#ffffff;stroke:#b8650a;stroke-width:1.6} .s2{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.6}
+  .sf{fill:#b8650a;stroke:#b8650a;stroke-width:1.6} .n{fill:#ffffff;stroke:#5b6a75;stroke-width:1.2}
+  .x{fill:#f2f4f5;stroke:#5b6a75;stroke-width:1;stroke-dasharray:3 2}
+  .ln{fill:none;stroke:#5b6a75;stroke-width:1.6} .lna{fill:none;stroke:#b8650a;stroke-width:2}
+  .dash{fill:none;stroke:#b8650a;stroke-width:1.6;stroke-dasharray:4 3} .hd{fill:#5b6a75} .hda{fill:#b8650a}
+  .okl{fill:none;stroke:#2f7d3b;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+  .badl{fill:none;stroke:#a23a2a;stroke-width:2.4;stroke-linecap:round}
+  .cA{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.2} .cB{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.2}</style><rect width="360" height="130" fill="#f2f4f5"/><text x="70" y="14" class="mut" text-anchor="middle">old rows in Metadata</text><rect class="n" x="12" y="22" width="116" height="18" rx="0"/><text x="70" y="35" text-anchor="middle">FileType</text><path class="badl" d="M18 31h104"/><rect class="n" x="12" y="46" width="116" height="18" rx="0"/><text x="70" y="59" text-anchor="middle">Custom</text><path class="badl" d="M18 55h104"/><rect class="n" x="12" y="70" width="116" height="18" rx="0"/><text x="70" y="83" text-anchor="middle">Owner</text><path class="lna" d="M136 46L176 46"/><path class="hda" d="M176 46L169.7 49.0L169.7 43.0Z"/><text x="270" y="14" class="mut" text-anchor="middle">after upload</text><rect class="cA" x="184" y="22" width="82" height="18" rx="0"/><rect class="s" x="266" y="22" width="82" height="18" rx="0"/><text x="225" y="35" text-anchor="middle">Custom</text><text x="307" y="35" text-anchor="middle">c1b</text><rect class="n" x="184" y="46" width="82" height="18" rx="0"/><rect class="s" x="266" y="46" width="82" height="18" rx="0"/><text x="225" y="59" text-anchor="middle">Owner</text><text x="307" y="59" class="mut" text-anchor="middle">(kept)</text><text x="180" y="104" class="acc" text-anchor="middle">keys in the upload are replaced, never duplicated</text><text x="180" y="120" class="mut" text-anchor="middle">FileType moved to the horizontal table; Owner untouched</text></svg>

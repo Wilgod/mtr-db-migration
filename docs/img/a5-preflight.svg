@@ -1,0 +1,13 @@
+<svg class="ill" viewBox="0 0 360 130" width="720" height="260" role="img" aria-label="Preflight report: row counts, overlaps, ID ranges, then you decide" xmlns="http://www.w3.org/2000/svg"><style>
+  .ill{background:#f2f4f5}
+  text{font-family:Consolas,"IBM Plex Mono","Courier New",monospace;font-size:9.5px;fill:#142029}
+  text.lbl{font-family:"Barlow Condensed","Arial Narrow",Arial,sans-serif;font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+  text.mut{fill:#5b6a75} text.acc{fill:#0b7f86} text.ok{fill:#2f7d3b} text.bad{fill:#a23a2a}
+  .s{fill:#ffffff;stroke:#0b7f86;stroke-width:1.6} .s2{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.6}
+  .sf{fill:#0b7f86;stroke:#0b7f86;stroke-width:1.6} .n{fill:#ffffff;stroke:#5b6a75;stroke-width:1.2}
+  .x{fill:#f2f4f5;stroke:#5b6a75;stroke-width:1;stroke-dasharray:3 2}
+  .ln{fill:none;stroke:#5b6a75;stroke-width:1.6} .lna{fill:none;stroke:#0b7f86;stroke-width:2}
+  .dash{fill:none;stroke:#0b7f86;stroke-width:1.6;stroke-dasharray:4 3} .hd{fill:#5b6a75} .hda{fill:#0b7f86}
+  .okl{fill:none;stroke:#2f7d3b;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+  .badl{fill:none;stroke:#a23a2a;stroke-width:2.4;stroke-linecap:round}
+  .cA{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.2} .cB{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.2}</style><rect width="360" height="130" fill="#f2f4f5"/><rect class="s" x="30" y="16" width="120" height="104" rx="6"/><rect class="s2" x="66" y="10" width="48" height="12" rx="3"/><path class="okl" d="M44 46l4 4 8-9"/><text x="62" y="50" text-anchor="start">row counts</text><path class="okl" d="M44 72l4 4 8-9"/><text x="62" y="76" text-anchor="start">site overlaps</text><path class="okl" d="M44 98l4 4 8-9"/><text x="62" y="102" text-anchor="start">ID ranges fit</text><path class="ln" d="M156 64L206 64"/><path class="hd" d="M206 64L199.7 67.0L199.7 61.0Z"/><path class="s2" d="M246 26L284 64L246 102L208 64Z"/><text x="246" y="61" class="lbl acc" text-anchor="middle">you</text><text x="246" y="74" class="lbl acc" text-anchor="middle">decide</text><path class="lna" d="M286 64L344 64"/><path class="hda" d="M344 64L337.7 67.0L337.7 61.0Z"/><text x="316" y="56" class="acc" text-anchor="middle">merge</text><text x="246" y="122" class="mut" text-anchor="middle">or change sources.json and rerun</text></svg>

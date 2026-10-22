@@ -1,0 +1,13 @@
+<svg class="ill" viewBox="0 0 360 130" width="720" height="260" role="img" aria-label="Create a new empty target database" xmlns="http://www.w3.org/2000/svg"><style>
+  .ill{background:#f2f4f5}
+  text{font-family:Consolas,"IBM Plex Mono","Courier New",monospace;font-size:9.5px;fill:#142029}
+  text.lbl{font-family:"Barlow Condensed","Arial Narrow",Arial,sans-serif;font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+  text.mut{fill:#5b6a75} text.acc{fill:#0b7f86} text.ok{fill:#2f7d3b} text.bad{fill:#a23a2a}
+  .s{fill:#ffffff;stroke:#0b7f86;stroke-width:1.6} .s2{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.6}
+  .sf{fill:#0b7f86;stroke:#0b7f86;stroke-width:1.6} .n{fill:#ffffff;stroke:#5b6a75;stroke-width:1.2}
+  .x{fill:#f2f4f5;stroke:#5b6a75;stroke-width:1;stroke-dasharray:3 2}
+  .ln{fill:none;stroke:#5b6a75;stroke-width:1.6} .lna{fill:none;stroke:#0b7f86;stroke-width:2}
+  .dash{fill:none;stroke:#0b7f86;stroke-width:1.6;stroke-dasharray:4 3} .hd{fill:#5b6a75} .hda{fill:#0b7f86}
+  .okl{fill:none;stroke:#2f7d3b;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+  .badl{fill:none;stroke:#a23a2a;stroke-width:2.4;stroke-linecap:round}
+  .cA{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.2} .cB{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.2}</style><rect width="360" height="130" fill="#f2f4f5"/><path class="n" d="M40 36.1V65.9A17 6.1 0 0 0 74 65.9V36.1Z"/><ellipse class="n" cx="57" cy="36.1" rx="17" ry="6.1"/><path class="badl" d="M52 49l10 10M62 49l-10 10"/><text x="57" y="90" class="mut" text-anchor="middle">existing DB</text><text x="57" y="102" class="mut" text-anchor="middle">kept unless</text><text x="57" y="114" class="mut" text-anchor="middle">-DropExistingTarget</text><path class="s2" d="M156 26.6V81.4A35 12.6 0 0 0 226 81.4V26.6Z"/><ellipse class="s2" cx="191" cy="26.6" rx="35" ry="12.6"/><path class="lna" d="M191 44v22M180 55h22"/><text x="191" y="114" class="acc" text-anchor="middle">MtrMigration_Consolidated</text><text x="300" y="50" class="mut" text-anchor="middle">new and</text><text x="300" y="63" class="mut" text-anchor="middle">empty</text></svg>

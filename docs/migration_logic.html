@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MTR Migration Route Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: transit route map. Each process is a "line"; each step a station.
+   Left = the line with stations, right = the selected station's detail board. */
+:root {
+  --bg: #f2f4f5;
+  --surface: #ffffff;
+  --fg: #142029;
+  --muted: #5b6a75;
+  --rule: #d5dce0;
+  --line-a: #0b7f86;      /* Consolidation line */
+  --line-a-soft: #d9eff0;
+  --line-b: #b8650a;      /* Metadata line */
+  --line-b-soft: #f6e6d2;
+  --ok: #2f7d3b;
+  --warn: #a23a2a;
+  --code-bg: #e8edef;
+  --font-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, "Courier New", monospace;
+  --line: var(--line-a);
+  --line-soft: var(--line-a-soft);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e151a; --surface: #16212a; --fg: #e3eaee; --muted: #93a3ae; --rule: #2a3a45;
+    --line-a: #3cc0c7; --line-a-soft: #123a3e; --line-b: #f0a54a; --line-b-soft: #3d2a12;
+    --ok: #6cc47a; --warn: #f08a76; --code-bg: #0b1116; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e151a; --surface: #16212a; --fg: #e3eaee; --muted: #93a3ae; --rule: #2a3a45;
+  --line-a: #3cc0c7; --line-a-soft: #123a3e; --line-b: #f0a54a; --line-b-soft: #3d2a12;
+  --ok: #6cc47a; --warn: #f08a76; --code-bg: #0b1116; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 64px; }
+body.line-b { --line: var(--line-b); --line-soft: var(--line-b-soft); }
+
+h1, h2, h3 { font-family: var(--font-display); font-weight: 700; letter-spacing: .01em; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.1rem, 4.5vw, 3.2rem); line-height: 1.02; text-transform: uppercase; }
+h2 { font-size: 1.75rem; text-transform: uppercase; }
+h3 { font-size: 1.3rem; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--font-mono); font-size: .86em; }
+code { background: var(--code-bg); padding: .08em .35em; border-radius: 3px; }
+.eyebrow { font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: .14em; font-size: .85rem; color: var(--muted); }
+
+/* header */
+header.top { display: grid; gap: 14px; padding-bottom: 22px; border-bottom: 2px solid var(--fg); }
+header.top p { color: var(--muted); }
+.lines { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.line-tab {
+  display: inline-flex; align-items: center; gap: 10px; cursor: pointer;
+  font-family: var(--font-display); font-weight: 600; font-size: 1.15rem; text-transform: uppercase; letter-spacing: .04em;
+  background: var(--surface); color: var(--fg); border: 2px solid var(--rule); border-radius: 999px; padding: 6px 16px 6px 8px;
+}
+.line-tab .roundel { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: var(--surface); font-size: .95rem; }
+.line-tab[data-line="a"] .roundel { background: var(--line-a); }
+.line-tab[data-line="b"] .roundel { background: var(--line-b); }
+.line-tab[aria-selected="true"][data-line="a"] { border-color: var(--line-a); background: var(--line-a-soft); }
+.line-tab[aria-selected="true"][data-line="b"] { border-color: var(--line-b); background: var(--line-b-soft); }
+.line-tab:focus-visible, .station:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--line); outline-offset: 2px; }
+
+/* route map */
+.route { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 32px; margin-top: 28px; align-items: start; }
+@media (max-width: 860px) { .route { grid-template-columns: minmax(0, 1fr); } }
+.map { position: relative; padding-left: 4px; }
+.map-head { display: grid; gap: 2px; margin-bottom: 12px; }
+.map-head .from-to { font-family: var(--font-mono); font-size: .78rem; color: var(--muted); }
+.stations { list-style: none; margin: 0; padding: 0; position: relative; }
+.stations::before { content: ""; position: absolute; left: 17px; top: 18px; bottom: 18px; width: 8px; background: var(--line); border-radius: 4px; }
+.station {
+  position: relative; display: grid; grid-template-columns: 42px 36px minmax(0, 1fr); align-items: center; gap: 10px;
+  width: 100%; text-align: left; background: none; border: 0; padding: 7px 6px 7px 0; cursor: pointer; color: var(--fg); font: inherit; border-radius: 8px;
+}
+.station .dot { width: 26px; height: 26px; margin-left: 8px; border-radius: 50%; background: var(--surface); border: 5px solid var(--line); box-sizing: border-box; z-index: 1; transition: transform .15s; }
+.station .name { font-family: var(--font-display); font-weight: 600; font-size: 1.2rem; text-transform: uppercase; letter-spacing: .03em; line-height: 1.1; }
+.station .sub { display: block; font-family: var(--font-body); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: .82rem; color: var(--muted); }
+.station:hover .dot { transform: scale(1.12); }
+.station[aria-current="step"] .dot { background: var(--line); box-shadow: 0 0 0 4px var(--line-soft); }
+.station[aria-current="step"] .name { color: var(--line); }
+.station.gate .dot { border-radius: 4px; transform: rotate(45deg); }
+.station.gate:hover .dot { transform: rotate(45deg) scale(1.12); }
+.station.terminus .dot { width: 30px; height: 30px; margin-left: 6px; border-width: 7px; }
+/* step icons */
+.ico { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; display: block; }
+.station .tile { width: 36px; height: 36px; border-radius: 8px; display: grid; place-items: center; background: var(--line-soft); color: var(--line); transition: background .15s, color .15s; }
+.station[aria-current="step"] .tile { background: var(--line); color: var(--surface); }
+.board-head .big-ico { flex: none; width: 46px; height: 46px; border-radius: 10px; background: color-mix(in srgb, var(--surface) 18%, transparent); display: grid; place-items: center; }
+.board-head .big-ico .ico { width: 30px; height: 30px; stroke: var(--surface); }
+.board-head .titles { min-width: 0; }
+
+/* step pictures (also exported to docs/img/*.svg) */
+.ill-frame { background: var(--bg); border: 1px solid var(--rule); border-radius: 6px; padding: 8px; overflow-x: auto; }
+.ill-frame svg { display: block; width: 100%; height: auto; }
+.ill text { font-family: var(--font-mono); font-size: 9.5px; fill: var(--fg); }
+.ill text.lbl { font-family: var(--font-display); font-weight: 600; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+.ill text.mut { fill: var(--muted); }
+.ill text.acc { fill: var(--line); }
+.ill text.ok { fill: var(--ok); }
+.ill text.bad { fill: var(--warn); }
+.ill .s { fill: var(--surface); stroke: var(--line); stroke-width: 1.6; }
+.ill .s2 { fill: var(--line-soft); stroke: var(--line); stroke-width: 1.6; }
+.ill .sf { fill: var(--line); stroke: var(--line); stroke-width: 1.6; }
+.ill .n { fill: var(--surface); stroke: var(--muted); stroke-width: 1.2; }
+.ill .x { fill: var(--bg); stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 2; }
+.ill .ln { fill: none; stroke: var(--muted); stroke-width: 1.6; }
+.ill .lna { fill: none; stroke: var(--line); stroke-width: 2; }
+.ill .dash { fill: none; stroke: var(--line); stroke-width: 1.6; stroke-dasharray: 4 3; }
+.ill .hd { fill: var(--muted); }
+.ill .hda { fill: var(--line); }
+.ill .okl { fill: none; stroke: var(--ok); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.ill .badl { fill: none; stroke: var(--warn); stroke-width: 2.4; stroke-linecap: round; }
+.ill .cA { fill: var(--line-a-soft); stroke: var(--line-a); stroke-width: 1.2; }
+.ill .cB { fill: var(--line-b-soft); stroke: var(--line-b); stroke-width: 1.2; }
+
+.interchange { margin: 10px 0 0 0; display: flex; gap: 10px; align-items: center; font-size: .85rem; color: var(--muted); }
+.interchange .ring { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 5px solid var(--fg); background: var(--surface); margin-left: 8px; box-sizing: border-box; }
+.interchange button { background: none; border: 0; padding: 0; color: var(--fg); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+/* detail board */
+.board { background: var(--surface); border: 2px solid var(--fg); border-radius: 6px; overflow: hidden; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); }
+@media (max-width: 860px) { .board { position: static; } }
+.board-head { background: var(--line); color: var(--surface); padding: 12px 18px; display: flex; align-items: center; gap: 14px; }
+.board-head .num { font-family: var(--font-display); font-weight: 700; font-size: 2rem; line-height: 1; min-width: 1.4em; }
+.board-head h3 { font-size: 1.55rem; text-transform: uppercase; color: var(--surface); }
+.board-head .file { font-family: var(--font-mono); font-size: .78rem; opacity: .9; overflow-wrap: anywhere; }
+.board-body { padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.board-body ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
+.board-body li { max-width: 70ch; }
+.why { border-left: 4px solid var(--line); background: var(--line-soft); padding: 10px 14px; border-radius: 0 4px 4px 0; font-size: .93rem; }
+.why b { font-family: var(--font-display); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; margin-right: 6px; }
+pre.snip { margin: 0; background: var(--code-bg); padding: 12px 14px; border-radius: 4px; overflow-x: auto; font-family: var(--font-mono); font-size: .8rem; line-height: 1.5; }
+.board-foot { display: flex; justify-content: space-between; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--rule); }
+.btn { font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; font-size: 1rem; background: var(--surface); color: var(--fg); border: 2px solid var(--fg); border-radius: 4px; padding: 5px 14px; cursor: pointer; }
+.btn:hover:not(:disabled) { background: var(--line); border-color: var(--line); color: var(--surface); }
+.btn:disabled { opacity: .35; cursor: default; }
+
+/* logic sections */
+section.logic { margin-top: 56px; display: grid; gap: 16px; }
+section.logic > header { display: grid; gap: 6px; border-top: 2px solid var(--fg); padding-top: 14px; }
+section.logic > header p { color: var(--muted); }
+.panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 18px; min-width: 0; }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 860px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+th { font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; font-size: .9rem; text-align: left; border-bottom: 2px solid var(--fg); padding: 6px 8px; }
+td { border-bottom: 1px solid var(--rule); padding: 6px 8px; vertical-align: top; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: .82rem; }
+.pill { display: inline-block; font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; font-size: .8rem; padding: 1px 8px; border-radius: 999px; border: 1.5px solid currentColor; white-space: nowrap; }
+.pill.skip { color: var(--warn); }
+.pill.merge { color: var(--line-a); }
+.pill.mod { color: var(--line-b); }
+.pill.ok { color: var(--ok); }
+
+/* offset calculator */
+.calc-row input { width: 10ch; min-width: 10ch; font-family: var(--font-mono); font-size: .85rem; padding: 3px 6px; border: 1px solid var(--rule); border-radius: 3px; background: var(--bg); color: var(--fg); text-align: right; }
+.bars { display: grid; gap: 4px; margin-top: 14px; }
+.bar-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; align-items: center; font-family: var(--font-mono); font-size: .75rem; }
+.bar-track { position: relative; height: 16px; background: var(--code-bg); border-radius: 2px; }
+.bar { position: absolute; top: 0; bottom: 0; background: var(--line-a); border-radius: 2px; min-width: 2px; }
+.bar-row:nth-child(even) .bar { background: var(--line-b); }
+.axis { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: .72rem; color: var(--muted); margin-left: 100px; }
+.verdict { margin-top: 10px; font-size: .9rem; }
+
+/* vertical -> horizontal */
+.keys { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+.keys label { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: .8rem; background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+.keys input { accent-color: var(--line-b); }
+.flow-arrow { font-family: var(--font-display); font-size: 1.1rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 8px 0; }
+tr.moving td { background: var(--line-b-soft); }
+td.null { color: var(--muted); font-style: italic; }
+
+/* matching ladder */
+.ladder { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.rung { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1.5px solid var(--rule); border-radius: 6px; background: var(--surface); }
+.rung .n { font-family: var(--font-display); font-weight: 700; font-size: 1.5rem; color: var(--muted); text-align: center; }
+.rung .t { min-width: 0; }
+.rung .t b { font-family: var(--font-mono); font-weight: 500; font-size: .85rem; }
+.rung .t span { display: block; color: var(--muted); font-size: .84rem; }
+.rung.hit { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, var(--surface)); }
+.rung.hit .n { color: var(--ok); }
+.rung.miss { opacity: .65; }
+.rung.reject { border-color: var(--warn); }
+.sample-pick { display: flex; flex-wrap: wrap; gap: 8px; }
+.sample-pick button { font: inherit; font-size: .85rem; background: var(--bg); color: var(--fg); border: 1.5px solid var(--rule); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.sample-pick button[aria-pressed="true"] { border-color: var(--line-b); background: var(--line-b-soft); }
+.row-card { margin-top: 12px; font-family: var(--font-mono); font-size: .8rem; background: var(--code-bg); border-radius: 4px; padding: 10px 12px; overflow-x: auto; }
+.row-card div { white-space: nowrap; }
+.row-card .k { color: var(--muted); display: inline-block; min-width: 24ch; }
+.outcome { margin-top: 12px; font-weight: 600; }
+
+footer.end { margin-top: 56px; padding-top: 14px; border-top: 2px solid var(--fg); color: var(--muted); font-size: .85rem; display: grid; gap: 6px; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<style>html{color-scheme:light}body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow">mtr-db-migration · how it works</span>
+    <h1>MTR Migration Route Map</h1>
+    <p>Two processes, drawn as two lines. Pick a line, then click any station to see what happens at that step and why. The worked examples further down run the same rules the scripts use.</p>
+    <div class="lines" role="tablist" aria-label="Choose a process">
+      <button class="line-tab" role="tab" id="tab-a" data-line="a" aria-selected="true" aria-controls="route"><span class="roundel">A</span>Consolidation line</button>
+      <button class="line-tab" role="tab" id="tab-b" data-line="b" aria-selected="false" aria-controls="route"><span class="roundel">B</span>Metadata line</button>
+    </div>
+  </header>
+
+  <div class="route" id="route" role="tabpanel">
+    <nav class="map" aria-label="Steps">
+      <div class="map-head">
+        <h2 id="line-title">Consolidation line</h2>
+        <span class="from-to" id="line-fromto"></span>
+      </div>
+      <ol class="stations" id="stations"></ol>
+      <p class="interchange"><span class="ring" aria-hidden="true"></span><span id="interchange-text"></span></p>
+    </nav>
+
+    <article class="board" aria-live="polite">
+      <div class="board-head">
+        <span class="num" id="b-num"></span>
+        <span class="big-ico" id="b-ico" aria-hidden="true"></span>
+        <div class="titles"><h3 id="b-title"></h3><div class="file" id="b-file"></div></div>
+      </div>
+      <div class="board-body" id="b-body"></div>
+      <div class="board-foot">
+        <button class="btn" id="prev">← Previous</button>
+        <button class="btn" id="next">Next →</button>
+      </div>
+    </article>
+  </div>
+
+  <!-- ===================== LOGIC A1: offsets ===================== -->
+  <section class="logic" id="offsets">
+    <header>
+      <span class="eyebrow">Consolidation · logic 1</span>
+      <h2>Renumbering IDs without collisions</h2>
+      <p>Every source numbers its IDs from 1. Each source gets an offset equal to the sum of the highest IDs of the sources listed before it, so each source lands in its own unbroken range. Change the numbers to try it.</p>
+    </header>
+    <div class="panel cols">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Source (priority order)</th><th class="num">Highest FileId</th><th class="num">Offset</th><th class="num">New range</th></tr></thead>
+          <tbody id="calc-body"></tbody>
+        </table>
+      </div>
+      <div>
+        <div class="eyebrow">New FileId ranges</div>
+        <div class="bars" id="bars"></div>
+        <div class="axis"><span>1</span><span id="axis-max"></span></div>
+        <p class="verdict" id="calc-verdict"></p>
+        <pre class="snip" style="margin-top:12px">new_id = old_id + offset
+-- every column that points to the same ID shifts by the same offset:
+-- Metadata.FileId, Permissions.FileId, MigrationTasks.FileId,
+-- ScanProgress.LastResolvedFileId, MigrationTasks_Parsed.FileId</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== LOGIC A2: conflicts ===================== -->
+  <section class="logic" id="conflicts">
+    <header>
+      <span class="eyebrow">Consolidation · logic 2</span>
+      <h2>When two databases hold the same record</h2>
+      <p>The source listed first in <code>sources.json</code> wins. Every row that is not copied 1:1 is written to <code>_merge.conflict_log</code>, so nothing disappears without a record.</p>
+    </header>
+    <div class="panel tbl-wrap">
+      <table>
+        <thead><tr><th>Record</th><th>Counts as the same when</th><th>Result</th><th>What happens</th></tr></thead>
+        <tbody>
+          <tr><td>File</td><td><code>OriginalSharePointPath</code> matches</td><td><span class="pill skip">skipped</span></td><td>Lower-priority copy is not loaded, nor are its Metadata, Permissions and Tasks.</td></tr>
+          <tr><td>AD group</td><td><code>GroupName</code> matches</td><td><span class="pill merge">merged</span></td><td>Folded into the first group. Members are moved to the surviving group.</td></tr>
+          <tr><td>AD group</td><td>same <code>GroupGuid</code>, different name</td><td><span class="pill mod">modified</span></td><td>Loaded with <code>GroupGuid = NULL</code>.</td></tr>
+          <tr><td>Group member</td><td>same user already in the merged group</td><td><span class="pill skip">skipped</span></td><td>The duplicate membership is dropped.</td></tr>
+          <tr><td>Library scan</td><td><code>(LibraryName, SiteName)</code> matches</td><td><span class="pill skip">skipped</span></td><td>That library's FolderInheritanceBreaks are skipped too.</td></tr>
+          <tr><td>Active LAN ID</td><td><code>LanId</code> matches</td><td><span class="pill ok">union</span></td><td>Kept once, with the newest UploadedAt.</td></tr>
+          <tr><td>Site mapping, Folder</td><td>primary key matches</td><td><span class="pill skip">skipped</span></td><td>Lower-priority copy is not loaded.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== LOGIC B1: vertical -> horizontal ===================== -->
+  <section class="logic" id="pivot">
+    <header>
+      <span class="eyebrow">Metadata · logic 1</span>
+      <h2>Vertical rows become one horizontal row</h2>
+      <p>Tick a key to make it a fixed column, as if you added it to <code>HorizontalMetadata.Columns</code> in <code>config.json</code>. Fixed keys move into the file's single row. The rest stay as vertical rows in <code>Metadata</code>.</p>
+    </header>
+    <div class="panel">
+      <div class="eyebrow">Fixed columns in config.json</div>
+      <div class="keys" id="keys"></div>
+      <div class="cols">
+        <div class="tbl-wrap">
+          <div class="eyebrow">Uploaded values for FileId 9</div>
+          <table>
+            <thead><tr><th>MetadataKey</th><th>MetadataValue</th><th>Goes to</th></tr></thead>
+            <tbody id="vert-body"></tbody>
+          </table>
+        </div>
+        <div class="tbl-wrap">
+          <div class="eyebrow">"MetadataHorizontal": 1 row</div>
+          <table><thead id="hor-head"></thead><tbody id="hor-body"></tbody></table>
+          <div class="flow-arrow">"Metadata": rows that stay vertical</div>
+          <table>
+            <thead><tr><th>FileId</th><th>MetadataKey</th><th>MetadataValue</th></tr></thead>
+            <tbody id="stay-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== LOGIC B2: matching ladder ===================== -->
+  <section class="logic" id="matching">
+    <header>
+      <span class="eyebrow">Metadata · logic 2</span>
+      <h2>Finding the file for each uploaded row</h2>
+      <p>Each row is tried against four rules, top to bottom, and the first rule that matches wins. Pick an example row to see which rule catches it.</p>
+    </header>
+    <div class="panel cols">
+      <div>
+        <div class="sample-pick" id="samples" role="group" aria-label="Example rows"></div>
+        <div class="row-card" id="row-card"></div>
+        <p class="outcome" id="outcome"></p>
+      </div>
+      <ol class="ladder" id="ladder"></ol>
+    </div>
+  </section>
+
+  <footer class="end">
+    <span>Source files: <code>consolidation/</code> (sql/00–06, generate.py, run_consolidation.ps1) · <code>metadata_horizontal/</code> (mh_app.py, metadata_horizontal.py, config.json) · Written version: <code>docs/MIGRATION_LOGIC.md</code></span>
+    <span>Tested on generated test data (9 source databases built from the real schema dumps), not on production data.</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var LINES = {
+    a: {
+      title: "Consolidation line",
+      fromto: "9 cwp* databases → MtrMigration_Consolidated",
+      interchange: "Interchange at <b>MtrMigration_Consolidated</b>: the Metadata line runs on this database. ",
+      other: "b", otherLabel: "Change to the Metadata line",
+      stations: [
+        { name: "Generate", sub: "write the SQL", file: "consolidation/generate.py", kind: "",
+          does: ["Reads <code>sources.json</code> (which databases, and their priority order) and the 9 schema dumps.",
+                 "Writes steps 01, 02, 03, 05 and 06 with a column list fitted to each source, because the older databases are missing some columns.",
+                 "Stops with an error if any source column has no place in the target, so data can never be dropped silently."],
+          why: "The 9 databases are on different schema versions, so one hand-written script would break on the oldest ones." },
+        { name: "Create", sub: "new empty database", file: "run_consolidation.ps1 -Steps create", kind: "",
+          does: ["Creates <code>MtrMigration_Consolidated</code>.",
+                 "Refuses to touch an existing database unless you pass <code>-DropExistingTarget</code>."],
+          why: "The sources are only ever read, never changed. A failed run is fixed by rebuilding the target." },
+        { name: "Schema", sub: "superset of all 9", file: "consolidation/sql/00_target_schema.sql", kind: "",
+          does: ["Creates every table and column found in any source, based on cwp_opspj4, the most complete one.",
+                 "App tables keep the exact layout the phase3 GUI expects, plus <code>SiteId</code>.",
+                 "Adds the <code>Sites</code> lookup table and the <code>_merge</code> audit schema.",
+                 "Leaves out the <code>bak_*</code> backup tables."],
+          why: "Taking the widest version of every column means no source value is cut short." },
+        { name: "Attach", sub: "link the sources", file: "consolidation/sql/01_attach_sources.sql", kind: "",
+          does: ["Uses <code>postgres_fdw</code> to make each source readable as schema <code>src_&lt;name&gt;</code>.",
+                 "No data moves yet."],
+          snip: "SELECT count(*) FROM src_cwp_ecr.\"Files\";   -- reads cwp_ecr live" },
+        { name: "Preflight", sub: "read-only report · you decide", file: "consolidation/sql/02_preflight.sql", kind: "gate",
+          does: ["Row counts for every table in every source.",
+                 "Sites that appear in more than one database, and how many files, groups and scans overlap.",
+                 "The new ID range for each source, and whether it fits in <code>integer</code>.",
+                 "The runner pauses here until you confirm."],
+          why: "Overlaps decide which rows will be skipped or merged. If the numbers look wrong, change the order in <code>sources.json</code> and run again." },
+        { name: "Merge", sub: "one transaction", file: "consolidation/sql/03_merge.sql", kind: "",
+          does: ["Works out each source's ID offsets, then fills <code>Sites</code> from every distinct site name.",
+                 "Copies the tables parents-first (Files before Metadata, groups before members), applying the offset, conflict and old-database rules shown below.",
+                 "Fills <code>SiteId</code> as each row is inserted.",
+                 "Any error rolls back the whole merge."],
+          why: "One transaction means you never end up with half a merged database." },
+        { name: "Finalize", sub: "indexes · keys · triggers", file: "consolidation/sql/04_finalize.sql", kind: "",
+          does: ["Adds 73 secondary indexes: the 35 found in the sources plus 38 new ones based on the GUI's queries. Long paths use hash indexes.",
+                 "Adds the foreign keys. These fail if any orphan row slipped through.",
+                 "On 13 tables, adds a <code>SiteId</code> index, a foreign key to <code>Sites</code>, and a trigger that fills <code>SiteId</code> for rows the GUI writes later.",
+                 "Sets each sequence to continue after the highest merged ID."],
+          why: "Building indexes after the load is much faster than keeping them up to date row by row." },
+        { name: "Verify", sub: "every row accounted for", file: "consolidation/sql/05_verify.sql", kind: "gate",
+          does: ["For each table and source, checks that the rows loaded plus the rows logged as conflicts equal the source row count.",
+                 "Checks that every <code>SiteId</code> matches its <code>SiteName</code>.",
+                 "Fails loudly if anything is off."],
+          snip: "NOTICE:  VERIFY OK: every source row is loaded or accounted for in _merge.conflict_log" },
+        { name: "Detach", sub: "go live", file: "consolidation/sql/06_detach_sources.sql", kind: "terminus",
+          does: ["Removes the links to the source databases. The <code>_merge</code> audit trail stays.",
+                 "Point the phase3 GUI connection string at <code>MtrMigration_Consolidated</code>."],
+          snip: "SELECT _merge.source_of('Files', \"FileId\") FROM \"Files\" LIMIT 5;  -- where did this row come from?" }
+      ]
+    },
+    b: {
+      title: "Metadata line",
+      fromto: "CSV / XLSX → MetadataHorizontal + Metadata",
+      interchange: "Runs on the database built by the Consolidation line. ",
+      other: "a", otherLabel: "Change to the Consolidation line",
+      stations: [
+        { name: "Read", sub: "CSV or XLSX", file: "metadata_horizontal/mh_app.py → Upload CSV/XLSX", kind: "",
+          does: ["Reads a CSV (UTF-8) or the first sheet of an XLSX, keeping every value as text.",
+                 "Excel numbers like <code>5.0</code> become <code>5</code>, and dates become <code>YYYY-MM-DD HH:MM:SS</code>."] },
+        { name: "Sort headers", sub: "fixed · vertical · skip", file: "config.json", kind: "",
+          does: ["<b>Fixed</b>: the header is a key in <code>HorizontalMetadata.Columns</code>.",
+                 "<b>Identity</b>: <code>FileId</code>, <code>UniqueId</code>, <code>FileRef</code>, <code>OriginalSharePointPath</code>, <code>FSObjType</code> and <code>VersionLabel</code> are used for matching only.",
+                 "<b>Skip</b>: the header is listed in <code>SkipColumns</code>.",
+                 "<b>Vertical</b>: everything else.",
+                 "Header matching ignores case."] },
+        { name: "Filter rows", sub: "folders · old versions", file: "CurrentVersionOnly", kind: "",
+          does: ["Rows with <code>FSObjType = 1</code> (folders) are skipped.",
+                 "With <code>CurrentVersionOnly</code> on, rows whose <code>VersionLabel</code> is not <code>Current</code> are skipped too."] },
+        { name: "Stage", sub: "bulk copy", file: "temp table mh_stage", kind: "",
+          does: ["Rows are bulk-copied into a temporary table in batches of 5,000, with the fixed and vertical values stored as JSON.",
+                 "From here on, every step runs inside one database transaction."] },
+        { name: "Match", sub: "4-rule ladder", file: "see “Finding the file” below", kind: "gate",
+          does: ["Rules in order: FileId (checked against the row's other identities), UniqueId, OriginalSharePointPath, FileRef.",
+                 "If the same file appears in more than one row, the last row wins.",
+                 "Rows that match no file are written to <code>logs/unmatched_*.csv</code>."],
+          why: "The merge renumbered FileIds, so a FileId in an older export could point to a different file. It is only trusted when the row's other identities agree." },
+        { name: "Horizontal", sub: "1 row per file", file: "\"MetadataHorizontal\"", kind: "",
+          does: ["Inserts each file's row, or updates it if it already exists.",
+                 "Empty cells become <code>NULL</code>.",
+                 "Fixed columns that aren't in this upload keep their old values.",
+                 "Also records <code>SiteName</code>, <code>SourceFile</code> and <code>UpdatedAt</code>."] },
+        { name: "Vertical", sub: "replace, never duplicate", file: "\"Metadata\"", kind: "",
+          does: ["For each matched file, deletes its old <code>Metadata</code> rows for every key in this upload, fixed keys included.",
+                 "Inserts the non-empty vertical values.",
+                 "Keys that aren't in this upload are left alone."],
+          why: "Uploading the same file twice gives the same result, and a fixed key never ends up in both tables." },
+        { name: "Commit", sub: "all or nothing", file: "logs/unmatched_<file>_<time>.csv", kind: "terminus",
+          does: ["Commits the transaction. If any step failed, nothing is changed.",
+                 "The app shows the new rows in <b>View Table</b>."],
+          snip: "Matched FileRef: 2, UniqueId: 1; unmatched: 1\nDone: 2 horizontal rows upserted, 2 vertical Metadata rows written (2 old rows replaced)" }
+      ]
+    }
+  };
+
+  /*ILL-START*/
+  // Step icons (24x24 stroke paths) and step pictures (360x130). Pure functions returning SVG
+  // markup; docs/export_images.js runs this same block to write docs/img/*.svg for the .md file.
+  var ICONS = {
+    a: [
+      '<polyline points="8 6 2 12 8 18"/><polyline points="16 6 22 12 16 18"/><path d="M13.5 4l-3 16"/>',
+      '<ellipse cx="11" cy="5" rx="7" ry="3"/><path d="M4 5v12c0 1.7 3.1 3 7 3"/><path d="M18 5v6"/><path d="M4 11c0 1.7 3.1 3 7 3s7-1.3 7-3"/><path d="M19 15v6M16 18h6"/>',
+      '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M3 14h18M9 4v16"/>',
+      '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+      '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2.5h6V4"/><path d="M8.5 12.5l2 2 4.5-4.5"/>',
+      '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 7v10"/><path d="M6 7c0 4 4 5 10 5"/>',
+      '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14.5 8.5l2 2"/>',
+      '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+      '<path d="M5 21V4"/><path d="M5 4h12l-2.5 4 2.5 4H5"/>'
+    ],
+    b: [
+      '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8M8 17h8M12 13v8"/>',
+      '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16M3 9h18"/>',
+      '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>',
+      '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+      '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
+      '<rect x="2" y="9" width="20" height="6" rx="1"/><path d="M7 9v6M12 9v6M17 9v6"/>',
+      '<rect x="6" y="3" width="12" height="18" rx="1.5"/><path d="M6 8h12M6 13h12M6 18h12"/>',
+      '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><path d="M9.5 16l2 2 3-3"/>'
+    ]
+  };
+  function icon(line, i) { return '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">' + ICONS[line][i] + "</svg>"; }
+
+  var ILL = (function () {
+    function T(x, y, s, c, a) { return '<text x="' + x + '" y="' + y + '"' + (c ? ' class="' + c + '"' : "") + ' text-anchor="' + (a || "middle") + '">' + s + "</text>"; }
+    function box(x, y, w, h, c, r) { return '<rect class="' + (c || "s") + '" x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="' + (r == null ? 3 : r) + '"/>'; }
+    function cyl(x, y, w, h, c) {
+      var ry = Math.round(w * 0.18 * 10) / 10, k = c || "s";
+      return '<path class="' + k + '" d="M' + x + " " + (y + ry) + "V" + (y + h - ry) + "A" + (w / 2) + " " + ry + " 0 0 0 " + (x + w) + " " + (y + h - ry) + "V" + (y + ry) + 'Z"/>' +
+             '<ellipse class="' + k + '" cx="' + (x + w / 2) + '" cy="' + (y + ry) + '" rx="' + (w / 2) + '" ry="' + ry + '"/>';
+    }
+    function doc(x, y, w, h, c) {
+      var s = '<path class="' + (c || "s") + '" d="M' + x + " " + y + "h" + (w - 9) + "l9 9V" + (y + h) + "H" + x + 'Z"/><path class="ln" d="M' + (x + w - 9) + " " + y + "v9h9" + '"/>';
+      for (var i = 0; i < 3; i++) s += '<path class="ln" d="M' + (x + 6) + " " + (y + 18 + i * 9) + "h" + (w - 14) + '"/>';
+      return s;
+    }
+    function arr(x1, y1, x2, y2, a) {
+      var ang = Math.atan2(y2 - y1, x2 - x1), L = 7, sp = Math.PI / 7;
+      var p = function (d) { return (x2 - L * Math.cos(ang + d)).toFixed(1) + " " + (y2 - L * Math.sin(ang + d)).toFixed(1); };
+      return '<path class="' + (a ? "lna" : "ln") + '" d="M' + x1 + " " + y1 + "L" + x2 + " " + y2 + '"/><path class="' + (a ? "hda" : "hd") + '" d="M' + x2 + " " + y2 + "L" + p(-sp) + "L" + p(sp) + 'Z"/>';
+    }
+    function grid(x, y, cols, rows, cw, rh, fn) {
+      var s = "";
+      for (var r = 0; r < rows; r++) for (var c = 0; c < cols; c++) s += box(x + c * cw, y + r * rh, cw, rh, fn ? fn(r, c) : "n", 0);
+      return s;
+    }
+    function ok(x, y) { return '<path class="okl" d="M' + (x - 6) + " " + y + 'l4 4 8-9"/>'; }
+    function no(x, y) { return '<path class="badl" d="M' + (x - 5) + " " + (y - 5) + "l10 10M" + (x + 5) + " " + (y - 5) + 'l-10 10"/>'; }
+    function nine(x, y, c) { var s = ""; for (var i = 0; i < 9; i++) s += cyl(x + (i % 3) * 21, y + Math.floor(i / 3) * 24, 15, 18, c || "s"); return s; }
+    function svg(inner, label) {
+      return '<svg class="ill" viewBox="0 0 360 130" role="img" aria-label="' + label + '" xmlns="http://www.w3.org/2000/svg">' + inner + "</svg>";
+    }
+    var A = [
+      function () { // generate
+        var s = doc(18, 22, 38, 48) + T(37, 84, "sources.json") + doc(82, 22, 38, 48) + T(101, 84, "9 dumps") +
+          arr(124, 46, 138, 46) + box(142, 28, 78, 36, "s2", 6) + T(181, 50, "generate.py", "acc") + arr(224, 46, 246, 46, 1);
+        var n = ["01", "02", "03", "05", "06"];
+        for (var i = 0; i < 5; i++) s += doc(252 + i * 20, 26, 20, 30, "n") + T(262 + i * 20, 70, n[i], "mut");
+        return svg(s + T(180, 114, "a source column with no place in the target = stop", "mut"), "generate.py reads sources.json and the dumps and writes the SQL files");
+      },
+      function () { // create
+        return svg(cyl(40, 30, 34, 42, "n") + no(57, 54) + T(57, 90, "existing DB", "mut") + T(57, 102, "kept unless", "mut") + T(57, 114, "-DropExistingTarget", "mut") +
+          cyl(156, 14, 70, 80, "s2") + '<path class="lna" d="M191 44v22M180 55h22"/>' + T(191, 114, "MtrMigration_Consolidated", "acc") +
+          T(300, 50, "new and", "mut") + T(300, 63, "empty", "mut"), "Create a new empty target database");
+      },
+      function () { // schema
+        var s = grid(14, 30, 3, 5, 8, 8) + T(26, 84, "cwp2", "mut") + grid(52, 30, 4, 5, 8, 8) + T(68, 84, "xrl", "mut") +
+          grid(96, 30, 5, 5, 8, 8) + T(116, 84, "opspj4", "mut") + arr(144, 50, 170, 50, 1) +
+          grid(176, 18, 8, 6, 12, 9, function (r) { return r === 0 ? "s2" : "s"; }) + T(224, 86, "superset", "lbl acc") +
+          box(290, 18, 60, 20, "s2") + T(320, 32, "Sites") + box(290, 46, 60, 20, "n") + T(320, 60, "_merge") +
+          T(320, 86, "bak_*", "mut") + '<path class="badl" d="M302 83h36"/>';
+        return svg(s + T(180, 116, "every column of every source, widest type", "mut"), "Create one schema that contains every table and column");
+      },
+      function () { // attach
+        return svg(nine(14, 22) + T(45, 110, "9 sources", "mut") +
+          '<path class="dash" d="M80 40H236M80 58H236M80 76H236"/>' + T(158, 32, "postgres_fdw", "acc") + T(158, 98, "read live, nothing copied", "mut") +
+          cyl(240, 16, 76, 84, "s2") + T(278, 62, "src_*", "acc") + T(278, 118, "target", "mut"), "Link the sources through postgres_fdw");
+      },
+      function () { // preflight
+        var s = box(30, 16, 120, 104, "s", 6) + box(66, 10, 48, 12, "s2", 3);
+        var items = ["row counts", "site overlaps", "ID ranges fit"];
+        for (var i = 0; i < 3; i++) s += ok(50, 46 + i * 26) + T(62, 50 + i * 26, items[i], "", "start");
+        s += arr(156, 64, 206, 64) + '<path class="s2" d="M246 26L284 64L246 102L208 64Z"/>' + T(246, 61, "you", "lbl acc") + T(246, 74, "decide", "lbl acc") +
+          arr(286, 64, 344, 64, 1) + T(316, 56, "merge", "acc") + T(246, 122, "or change sources.json and rerun", "mut");
+        return svg(s, "Preflight report: row counts, overlaps, ID ranges, then you decide");
+      },
+      function () { // merge
+        var s = nine(14, 22) + T(45, 110, "9 sources", "mut");
+        [34, 58, 82].forEach(function (y) { s += arr(82, y, 228, 58, 1); });
+        s += T(155, 30, "offset IDs", "mut") + T(155, 100, "resolve conflicts", "mut") +
+          cyl(234, 14, 86, 90, "s2") + T(277, 58, "1", "lbl acc") + T(277, 72, "transaction", "acc") + T(277, 122, "MtrMigration_Consolidated", "mut");
+        return svg(s, "Copy all sources into the target in one transaction");
+      },
+      function () { // finalize
+        var s = cyl(16, 20, 66, 80, "s2") + T(49, 118, "merged DB", "mut") +
+          '<path class="lna" d="M84 30H112M84 60H112M84 90H112"/>' +
+          box(114, 17, 236, 26, "s") + T(124, 34, "73 indexes + SiteId on 13 tables", "", "start") +
+          box(114, 47, 236, 26, "s") + T(124, 64, "foreign keys catch any orphan row", "", "start") +
+          box(114, 77, 236, 26, "s") + T(124, 94, "sequences continue after max ID", "", "start");
+        return svg(s, "Add indexes, foreign keys, SiteId triggers and reset sequences");
+      },
+      function () { // verify
+        return svg(box(8, 26, 96, 46, "s") + T(56, 45, "source rows", "lbl") + T(56, 61, "1,240") + T(118, 54, "=", "lbl") +
+          box(132, 26, 90, 46, "s2") + T(177, 45, "loaded", "lbl") + T(177, 61, "1,231") + T(236, 54, "+", "lbl") +
+          box(250, 26, 102, 46, "n") + T(301, 45, "conflict log", "lbl") + T(301, 61, "9") +
+          ok(118, 98) + T(132, 102, "VERIFY OK, otherwise the step fails", "ok", "start") + T(180, 124, "(example numbers)", "mut"),
+          "Every source row is loaded or logged as a conflict");
+      },
+      function () { // detach
+        return svg(cyl(60, 18, 64, 78, "s2") + T(92, 116, "MtrMigration_Consolidated", "mut") +
+          '<path class="dash" d="M140 36H236"/>' + no(188, 36) + T(188, 22, "source links removed", "mut") +
+          arr(128, 82, 218, 82, 1) + T(172, 74, "connection string", "mut") +
+          box(222, 52, 126, 64, "s") + box(222, 52, 126, 12, "sf", 0) + T(285, 92, "phase3 GUI", "lbl"), "Remove the source links and point the GUI at the new database");
+      }
+    ];
+    var B = [
+      function () { // read
+        return svg(doc(20, 18, 44, 58) + T(42, 92, ".csv") + doc(76, 18, 44, 58) + T(98, 92, ".xlsx") + arr(128, 46, 160, 46, 1) +
+          grid(166, 16, 5, 5, 34, 12, function (r) { return r === 0 ? "s2" : "s"; }) + T(251, 92, "every value read as text", "mut") +
+          T(251, 106, "5.0 becomes 5", "mut"), "Read a CSV or XLSX file as text");
+      },
+      function () { // sort headers
+        var cells = [["FileRef", "n", "identity"], ["UniqueId", "n", "identity"], ["FileType", "s2", "fixed"], ["DocDate", "s2", "fixed"],
+                     ["Custom", "cA", "vertical"], ["Title", "cA", "vertical"], ["GUID", "x", "skip"]];
+        var s = "";
+        cells.forEach(function (c, i) {
+          var x = 8 + i * 49;
+          s += box(x, 26, 47, 24, c[1], 2) + T(x + 23.5, 42, c[0]) + T(x + 23.5, 66, c[2], c[2] === "fixed" ? "acc" : "mut");
+          if (c[2] === "skip") s += '<path class="badl" d="M' + (x + 8) + ' 38h31"/>';
+        });
+        s += box(16, 92, 12, 12, "s2", 2) + T(32, 102, "MetadataHorizontal", "", "start") + box(140, 92, 12, 12, "cA", 2) + T(156, 102, "Metadata", "", "start") +
+          box(222, 92, 12, 12, "x", 2) + T(238, 102, "stored nowhere", "", "start");
+        return svg(s + T(180, 124, "header matching ignores case", "mut"), "Sort each column into fixed, vertical, identity or skip");
+      },
+      function () { // filter
+        var rows = ["file", "folder", "file", "v2.0", "file"], s = "";
+        rows.forEach(function (r, i) { s += box(12, 10 + i * 22, 58, 16, r === "file" ? "s" : "n", 3) + T(41, 22 + i * 22, r, r === "file" ? "" : "mut"); });
+        s += arr(74, 54, 104, 54) + '<path class="s2" d="M108 14H196L164 58V96L140 108V58Z"/>' + arr(200, 54, 228, 54, 1);
+        for (var i = 0; i < 3; i++) s += box(232, 22 + i * 22, 58, 16, "s", 3) + T(261, 34 + i * 22, "file");
+        s += no(226, 106) + T(238, 110, "skipped: folder,", "bad", "start") + T(238, 122, "old version", "bad", "start");
+        return svg(s, "Skip folder rows and old versions");
+      },
+      function () { // stage
+        var s = "";
+        for (var i = 0; i < 4; i++) s += box(12, 18 + i * 20, 70, 14, "s", 2);
+        s += arr(88, 46, 120, 46, 1) + T(104, 36, "COPY", "acc") +
+          grid(126, 18, 4, 1, 54, 18, function () { return "s2"; }) + grid(126, 36, 4, 3, 54, 14) +
+          T(153, 31, "row") + T(207, 31, "ids") + T(261, 31, "h json") + T(315, 31, "v json") +
+          T(234, 102, "temp table mh_stage, 5,000 rows per batch", "mut") + T(234, 118, "one transaction from here on", "acc");
+        return svg(s, "Bulk copy rows into a temporary staging table");
+      },
+      function () { // match
+        var labels = ["1  FileId", "2  UniqueId", "3  OriginalSharePointPath", "4  FileRef"], s = box(8, 46, 62, 30, "s") + T(39, 65, "row");
+        s += arr(72, 61, 104, 61);
+        labels.forEach(function (l, i) {
+          var y = 8 + i * 28;
+          s += box(108, y, 150, 22, i === 1 ? "s2" : "n", 3) + T(116, y + 15, l, i === 1 ? "acc" : "", "start");
+          s += i === 0 ? no(270, y + 11) : i === 1 ? ok(272, y + 11) : T(272, y + 15, "-", "mut");
+        });
+        s += arr(282, 47, 304, 47, 1) + cyl(306, 26, 44, 50, "s2") + T(328, 92, "Files", "lbl");
+        return svg(s + T(180, 125, "first rule that matches wins", "mut"), "Match each row to a file with four rules in order");
+      },
+      function () { // horizontal
+        var keys = [["FileType", "Letter"], ["DocDate", "2020-01-01"], ["Remarks", "Reply..."], ["Title*", "Notes"]], s = "";
+        keys.forEach(function (k, i) {
+          var y = 10 + i * 24;
+          s += box(10, y, 64, 18, i < 3 ? "s2" : "n", 0) + box(74, y, 66, 18, "s", 0) + T(42, y + 13, k[0]) + T(107, y + 13, k[1]);
+          if (i < 3) s += arr(144, y + 9, 186, 52, 1);
+        });
+        s += grid(192, 32, 4, 1, 40, 16, function () { return "s2"; }) + grid(192, 48, 4, 1, 40, 16) +
+          T(212, 44, "FileId") + T(252, 44, "Type") + T(292, 44, "Date") + T(332, 44, "Remarks") +
+          T(212, 60, "9") + T(252, 60, "Letter") + T(292, 60, "2020") + T(332, 60, "Reply") +
+          T(272, 86, "1 row per file (upsert)", "acc") + T(100, 118, "* not fixed: stays vertical", "mut");
+        return svg(s, "Fixed keys collapse into one row per file");
+      },
+      function () { // vertical
+        var s = T(70, 14, "old rows in Metadata", "mut");
+        ["FileType", "Custom", "Owner"].forEach(function (k, i) {
+          var y = 22 + i * 24;
+          s += box(12, y, 116, 18, "n", 0) + T(70, y + 13, k);
+          if (i < 2) s += '<path class="badl" d="M18 ' + (y + 9) + 'h104"/>';
+        });
+        s += arr(136, 46, 176, 46, 1) + T(270, 14, "after upload", "mut");
+        [["Custom", "c1b", "cA"], ["Owner", "(kept)", "n"]].forEach(function (k, i) {
+          var y = 22 + i * 24;
+          s += box(184, y, 82, 18, k[2], 0) + box(266, y, 82, 18, "s", 0) + T(225, y + 13, k[0]) + T(307, y + 13, k[1], k[1] === "(kept)" ? "mut" : "");
+        });
+        return svg(s + T(180, 104, "keys in the upload are replaced, never duplicated", "acc") +
+          T(180, 120, "FileType moved to the horizontal table; Owner untouched", "mut"), "Replace the file's vertical rows for the uploaded keys");
+      },
+      function () { // commit
+        var s = box(40, 46, 56, 44, "s2", 6) + '<path class="lna" d="M52 46V34a16 16 0 0 1 32 0v12"/>' + ok(68, 66) + T(68, 110, "COMMIT", "lbl acc") +
+          T(178, 54, "any error:", "bad") + T(178, 68, "rollback,", "mut") + T(178, 82, "nothing changed", "mut") +
+          doc(262, 24, 50, 62) + T(287, 104, "unmatched_*.csv", "mut");
+        return svg(s, "Commit everything at once and write the unmatched report");
+      }
+    ];
+    return { a: A, b: B };
+  })();
+  /*ILL-END*/
+
+  var state = { line: "a", idx: 0 };
+  var $ = function (id) { return document.getElementById(id); };
+
+  function renderLine() {
+    var L = LINES[state.line];
+    document.body.classList.toggle("line-b", state.line === "b");
+    $("line-title").textContent = L.title;
+    $("line-fromto").textContent = L.fromto;
+    $("interchange-text").innerHTML = L.interchange;
+    var sw = document.createElement("button");
+    sw.type = "button"; sw.textContent = L.otherLabel;
+    sw.addEventListener("click", function () { setLine(L.other, 0); });
+    $("interchange-text").appendChild(sw);
+    ["a", "b"].forEach(function (k) {
+      $("tab-" + k).setAttribute("aria-selected", String(k === state.line));
+    });
+    var ol = $("stations"); ol.innerHTML = "";
+    L.stations.forEach(function (s, i) {
+      var li = document.createElement("li");
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "station " + s.kind;
+      b.innerHTML = '<span class="dot" aria-hidden="true"></span><span class="tile" aria-hidden="true">' + icon(state.line, i) +
+        '</span><span class="name">' + s.name + '<span class="sub">' + s.sub + '</span></span>';
+      b.addEventListener("click", function () { setStation(i); });
+      b.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault(); setStation(i + (e.key === "ArrowDown" ? 1 : -1), true);
+        }
+      });
+      li.appendChild(b); ol.appendChild(li);
+    });
+    renderStation();
+  }
+
+  function renderStation(focus) {
+    var L = LINES[state.line], s = L.stations[state.idx];
+    var btns = $("stations").querySelectorAll(".station");
+    btns.forEach(function (b, i) {
+      if (i === state.idx) b.setAttribute("aria-current", "step"); else b.removeAttribute("aria-current");
+    });
+    if (focus && btns[state.idx]) btns[state.idx].focus();
+    $("b-num").textContent = (state.line === "a" ? "A" : "B") + (state.idx + 1);
+    $("b-title").textContent = s.name;
+    $("b-file").textContent = s.file;
+    $("b-ico").innerHTML = icon(state.line, state.idx);
+    var html = '<div class="ill-frame">' + ILL[state.line][state.idx]() + "</div>" +
+      '<div class="eyebrow">What happens</div><ul>' + s.does.map(function (d) { return "<li>" + d + "</li>"; }).join("") + "</ul>";
+    if (s.why) html += '<p class="why"><b>Why</b>' + s.why + "</p>";
+    if (s.snip) html += '<pre class="snip"></pre>';
+    $("b-body").innerHTML = html;
+    if (s.snip) $("b-body").querySelector("pre").textContent = s.snip;
+    $("prev").disabled = state.idx === 0;
+    $("next").disabled = state.idx === L.stations.length - 1;
+    try { history.replaceState(null, "", "#" + state.line + (state.idx + 1)); } catch (e) {}
+  }
+
+  function setStation(i, focus) {
+    var n = LINES[state.line].stations.length;
+    state.idx = Math.max(0, Math.min(n - 1, i));
+    renderStation(focus);
+  }
+  function setLine(k, i) { state.line = k; state.idx = i || 0; renderLine(); }
+
+  $("tab-a").addEventListener("click", function () { setLine("a", 0); });
+  $("tab-b").addEventListener("click", function () { setLine("b", 0); });
+  $("prev").addEventListener("click", function () { setStation(state.idx - 1); });
+  $("next").addEventListener("click", function () { setStation(state.idx + 1); });
+
+  var m = /^#([ab])(\d+)$/.exec(location.hash || "");
+  if (m) { state.line = m[1]; state.idx = Math.max(0, parseInt(m[2], 10) - 1); if (state.idx >= LINES[state.line].stations.length) state.idx = 0; }
+  renderLine();
+
+  /* ---------- offset calculator ---------- */
+  var SOURCES = [["cwp_ecr", 120000], ["cwp_opspj3", 85000], ["cwp_opspj", 240000], ["cwp_procon", 60000],
+                 ["cwp_opspj2", 150000], ["cwp_opspj4", 310000], ["cwp_xrl", 45000], ["cwp", 30000], ["cwp2", 12000]];
+  var INT_MAX = 2147483647;
+  var fmt = function (n) { return n.toLocaleString("en-US"); };
+  function buildCalc() {
+    var tb = $("calc-body");
+    SOURCES.forEach(function (s, i) {
+      var tr = document.createElement("tr"); tr.className = "calc-row";
+      tr.innerHTML = '<td class="mono">' + (i + 1) + ". " + s[0] + '</td><td class="num"><input type="number" min="0" step="1" id="max-' + i + '" aria-label="Highest FileId in ' + s[0] + '" value="' + s[1] + '"></td><td class="num" id="off-' + i + '"></td><td class="num" id="rng-' + i + '"></td>';
+      tb.appendChild(tr);
+      tr.querySelector("input").addEventListener("input", calc);
+    });
+    calc();
+  }
+  function calc() {
+    var off = 0, rows = [];
+    SOURCES.forEach(function (s, i) {
+      var v = parseInt($("max-" + i).value, 10); if (!(v >= 0)) v = 0;
+      rows.push({ name: s[0], off: off, max: v });
+      $("off-" + i).textContent = fmt(off);
+      $("rng-" + i).textContent = v ? fmt(off + 1) + " – " + fmt(off + v) : "(empty)";
+      off += v;
+    });
+    var total = off || 1, bars = $("bars"); bars.innerHTML = "";
+    rows.forEach(function (r) {
+      var d = document.createElement("div"); d.className = "bar-row";
+      d.innerHTML = "<span>" + r.name + '</span><span class="bar-track"><span class="bar" style="left:' + (r.off / total * 100) + "%;width:" + (r.max / total * 100) + '%"></span></span>';
+      bars.appendChild(d);
+    });
+    $("axis-max").textContent = fmt(off);
+    var v = $("calc-verdict");
+    if (off > INT_MAX) { v.innerHTML = '<span class="pill skip">overflow</span> The last ID would be ' + fmt(off) + ", above 2,147,483,647. The merge would stop before copying anything."; }
+    else { v.innerHTML = '<span class="pill ok">fits</span> The last new ID is ' + fmt(off) + ", " + (off / INT_MAX * 100).toFixed(3) + "% of the integer limit. The ranges never overlap, and each source's rows stay in their original order."; }
+  }
+  buildCalc();
+
+  /* ---------- vertical -> horizontal ---------- */
+  var META = [["ishareFileType", "FileType", "Letter"], ["ishareDocumentDate", "DocumentDate", "2020-01-01"],
+              ["ishareRemarks", "Remarks", "Reply to Govt Interface meeting"], ["ishareOriginator", "Originator", "OPSPJ3"],
+              ["ishareFileTitle", "FileTitle", ""], ["CustomKey", "CustomKey", "c1b"], ["Title", "Title", "Meeting notes 28 July"]];
+  var fixed = { ishareFileType: true, ishareDocumentDate: true, ishareRemarks: true, ishareFileTitle: true };
+  function buildKeys() {
+    var box = $("keys");
+    META.forEach(function (m, i) {
+      var l = document.createElement("label");
+      l.innerHTML = '<input type="checkbox" id="fixed-' + i + '"' + (fixed[m[0]] ? " checked" : "") + "> " + m[0] + " → " + m[1];
+      l.querySelector("input").addEventListener("change", function (e) { fixed[m[0]] = e.target.checked; pivot(); });
+      box.appendChild(l);
+    });
+    pivot();
+  }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function pivot() {
+    var vb = "", hh = "<tr><th>FileId</th>", hd = "<tr><td class=\"num\">9</td>", sb = "", nstay = 0, nfix = 0;
+    META.forEach(function (m) {
+      var isF = !!fixed[m[0]], empty = m[2] === "";
+      var dest = isF ? '<span class="pill mod">horizontal</span>' : (empty ? '<span class="pill skip">not stored</span>' : '<span class="pill merge">vertical</span>');
+      vb += "<tr" + (isF ? ' class="moving"' : "") + "><td class=\"mono\">" + esc(m[0]) + "</td><td>" + (empty ? '<span class="null">(empty)</span>' : esc(m[2])) + "</td><td>" + dest + "</td></tr>";
+      if (isF) { nfix++; hh += "<th>" + esc(m[1]) + "</th>"; hd += empty ? '<td class="null">NULL</td>' : "<td>" + esc(m[2]) + "</td>"; }
+      else if (!empty) { nstay++; sb += '<tr><td class="num">9</td><td class="mono">' + esc(m[0]) + "</td><td>" + esc(m[2]) + "</td></tr>"; }
+    });
+    $("vert-body").innerHTML = vb;
+    $("hor-head").innerHTML = hh + "</tr>";
+    $("hor-body").innerHTML = nfix ? hd + "</tr>" : '<tr><td class="null" colspan="2">No fixed columns: nothing goes to the horizontal table.</td></tr>';
+    $("stay-body").innerHTML = nstay ? sb : '<tr><td class="null" colspan="3">Every key is fixed: nothing stays vertical.</td></tr>';
+  }
+  buildKeys();
+
+  /* ---------- matching ladder ---------- */
+  var FILES = [
+    { FileId: 9, uid: "45c48cce-2e2d-7fbd-ea1a-fc51c7c6ad26", path: "https://mtr.sharepoint.com/sites/cwp_ecr/Docs/f2.txt" },
+    { FileId: 14, uid: "aab32389-22bc-c7aa-a1d9-0b4c0e6b0f2d", path: "https://mtr.sharepoint.com/sites/cwp_ecr/Docs/f6.txt" }
+  ];
+  var SAMPLES = [
+    { label: "Pivot export with FileId", row: { FileId: "9", OriginalSharePointPath: "https://mtr.sharepoint.com/sites/cwp_ecr/Docs/f2.txt" } },
+    { label: "Old export, stale FileId", row: { FileId: "9", OriginalSharePointPath: "https://mtr.sharepoint.com/sites/cwp_ecr/Docs/f6.txt" } },
+    { label: "SharePoint report (UniqueId)", row: { UniqueId: "{45C48CCE-2E2D-7FBD-EA1A-FC51C7C6AD26}", FileRef: "/sites/x/other.txt" } },
+    { label: "FileRef only", row: { FileRef: "/sites/cwp_ecr/Docs/f6.txt" } },
+    { label: "Nothing matches", row: { UniqueId: "deadbeef-0000-0000-0000-000000000000", FileRef: "/nope/zzz.txt" } }
+  ];
+  var RUNGS = [
+    ["FileId", "FileId, but only if the row's UniqueId, OriginalSharePointPath and FileRef (where present) agree with that file"],
+    ["UniqueId", "SharePointUniqueId; braces and case don't matter"],
+    ["OriginalSharePointPath", "OriginalSharePointPath, exact match"],
+    ["FileRef", "The path part of OriginalSharePointPath (https://host removed)"]
+  ];
+  var normUid = function (u) { return (u || "").replace(/^\{|\}$/g, "").toLowerCase(); };
+  var pathPart = function (p) { return p.replace(/^[A-Za-z]+:\/\/[^/]+/, ""); };
+  function match(row) {
+    var res = [], found = null;
+    // 1 FileId with agreement check
+    if (row.FileId) {
+      var f = FILES.filter(function (x) { return String(x.FileId) === row.FileId; })[0];
+      if (!f) res.push(["miss", "No file has FileId " + row.FileId + "."]);
+      else {
+        var bad = [];
+        if (row.UniqueId && normUid(row.UniqueId) !== f.uid) bad.push("UniqueId");
+        if (row.OriginalSharePointPath && row.OriginalSharePointPath !== f.path) bad.push("OriginalSharePointPath");
+        if (row.FileRef && row.FileRef !== pathPart(f.path)) bad.push("FileRef");
+        if (bad.length) res.push(["reject", "FileId " + f.FileId + " exists, but its " + bad.join(" and ") + " differ, so the FileId is not trusted."]);
+        else { res.push(["hit", "FileId " + f.FileId + " exists and the row's other identities agree."]); found = f; }
+      }
+    } else res.push(["miss", "The row has no FileId."]);
+    // 2 UniqueId
+    if (!found) {
+      if (row.UniqueId) {
+        var f2 = FILES.filter(function (x) { return x.uid === normUid(row.UniqueId); })[0];
+        if (f2) { res.push(["hit", normUid(row.UniqueId) + " is FileId " + f2.FileId + "."]); found = f2; }
+        else res.push(["miss", "No file has this UniqueId."]);
+      } else res.push(["miss", "The row has no UniqueId."]);
+    } else res.push(["skip", ""]);
+    // 3 OriginalSharePointPath
+    if (!found) {
+      if (row.OriginalSharePointPath) {
+        var f3 = FILES.filter(function (x) { return x.path === row.OriginalSharePointPath; })[0];
+        if (f3) { res.push(["hit", "Exact path match: FileId " + f3.FileId + "."]); found = f3; }
+        else res.push(["miss", "No file has this path."]);
+      } else res.push(["miss", "The row has no OriginalSharePointPath."]);
+    } else res.push(["skip", ""]);
+    // 4 FileRef
+    if (!found) {
+      if (row.FileRef) {
+        var f4 = FILES.filter(function (x) { return pathPart(x.path) === row.FileRef; })[0];
+        if (f4) { res.push(["hit", row.FileRef + " = path of FileId " + f4.FileId + "."]); found = f4; }
+        else res.push(["miss", "No file has this path."]);
+      } else res.push(["miss", "The row has no FileRef."]);
+    } else res.push(["skip", ""]);
+    return { steps: res, found: found };
+  }
+  var pick = 0;
+  function buildSamples() {
+    var box = $("samples");
+    SAMPLES.forEach(function (s, i) {
+      var b = document.createElement("button"); b.type = "button"; b.textContent = s.label;
+      b.addEventListener("click", function () { pick = i; renderMatch(); });
+      box.appendChild(b);
+    });
+    renderMatch();
+  }
+  function renderMatch() {
+    var s = SAMPLES[pick], r = match(s.row);
+    $("samples").querySelectorAll("button").forEach(function (b, i) { b.setAttribute("aria-pressed", String(i === pick)); });
+    $("row-card").innerHTML = Object.keys(s.row).map(function (k) { return '<div><span class="k">' + k + "</span>" + esc(s.row[k]) + "</div>"; }).join("");
+    $("ladder").innerHTML = RUNGS.map(function (g, i) {
+      var st = r.steps[i], cls = st[0] === "skip" ? "miss" : st[0];
+      var tag = st[0] === "hit" ? '<span class="pill ok">match</span>' : st[0] === "reject" ? '<span class="pill skip">rejected</span>' : st[0] === "skip" ? '<span class="pill">not tried</span>' : '<span class="pill">no match</span>';
+      return '<li class="rung ' + cls + '"><span class="n">' + (i + 1) + '</span><span class="t"><b>' + g[0] + "</b><span>" + (st[1] || g[1]) + "</span></span>" + tag + "</li>";
+    }).join("");
+    $("outcome").innerHTML = r.found
+      ? 'Result: loaded into FileId <span class="mono">' + r.found.FileId + "</span>."
+      : 'Result: <span style="color:var(--warn)">not loaded.</span> The row is written to <code>logs/unmatched_*.csv</code>.';
+  }
+  buildSamples();
+})();
+</script>
+</body>
+</html>

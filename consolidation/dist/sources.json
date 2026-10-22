@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "Order = priority. When two sources hold the same natural key (Files.OriginalSharePointPath,",
+    "ADGroups.GroupName, ScanProgress(LibraryName,SiteName), sitemapping.sp2013_url, Folders.UniqueId)",
+    "the source listed FIRST wins. Default order = newest schema first (schema_comparison_tracker3.md).",
+    "Run 02_preflight.sql first: if it reports 0 overlaps the order does not matter.",
+    "Set enabled=false to leave a database out. 'dbname' is the real database name on the source server."
+  ],
+  "target_dbname": "MtrMigration_Consolidated",
+  "sources": [
+    { "name": "cwp_ecr",    "dbname": "cwp_ecr",    "host": "localhost", "port": 5432, "dump": "cwp_ecr_schema_20260902.sql",    "enabled": true },
+    { "name": "cwp_opspj3", "dbname": "cwp_opspj3", "host": "localhost", "port": 5432, "dump": "cwp_opspj3_schema_20260902.sql", "enabled": true },
+    { "name": "cwp_opspj",  "dbname": "cwp_opspj",  "host": "localhost", "port": 5432, "dump": "cwp_opspj_schema_20260902.sql",  "enabled": true },
+    { "name": "cwp_procon", "dbname": "cwp_procon", "host": "localhost", "port": 5432, "dump": "cwp_procon_schema_20260902.sql", "enabled": true },
+    { "name": "cwp_opspj2", "dbname": "cwp_opspj2", "host": "localhost", "port": 5432, "dump": "cwp_opspj2_schema_20260902.sql", "enabled": true },
+    { "name": "cwp_opspj4", "dbname": "cwp_opspj4", "host": "localhost", "port": 5432, "dump": "cwp_opspj4_schema_20260902.sql", "enabled": true },
+    { "name": "cwp_xrl",    "dbname": "cwp_xrl",    "host": "localhost", "port": 5432, "dump": "cwp_xrl_schema_20260902.sql",    "enabled": true },
+    { "name": "cwp",        "dbname": "cwp",        "host": "localhost", "port": 5432, "dump": "cwp_schema_20260902.sql",        "enabled": true },
+    { "name": "cwp2",       "dbname": "cwp2",       "host": "localhost", "port": 5432, "dump": "cwp2_schema_20260902.sql",       "enabled": true }
+  ]
+}

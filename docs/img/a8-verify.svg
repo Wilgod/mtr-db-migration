@@ -1,0 +1,13 @@
+<svg class="ill" viewBox="0 0 360 130" width="720" height="260" role="img" aria-label="Every source row is loaded or logged as a conflict" xmlns="http://www.w3.org/2000/svg"><style>
+  .ill{background:#f2f4f5}
+  text{font-family:Consolas,"IBM Plex Mono","Courier New",monospace;font-size:9.5px;fill:#142029}
+  text.lbl{font-family:"Barlow Condensed","Arial Narrow",Arial,sans-serif;font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+  text.mut{fill:#5b6a75} text.acc{fill:#0b7f86} text.ok{fill:#2f7d3b} text.bad{fill:#a23a2a}
+  .s{fill:#ffffff;stroke:#0b7f86;stroke-width:1.6} .s2{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.6}
+  .sf{fill:#0b7f86;stroke:#0b7f86;stroke-width:1.6} .n{fill:#ffffff;stroke:#5b6a75;stroke-width:1.2}
+  .x{fill:#f2f4f5;stroke:#5b6a75;stroke-width:1;stroke-dasharray:3 2}
+  .ln{fill:none;stroke:#5b6a75;stroke-width:1.6} .lna{fill:none;stroke:#0b7f86;stroke-width:2}
+  .dash{fill:none;stroke:#0b7f86;stroke-width:1.6;stroke-dasharray:4 3} .hd{fill:#5b6a75} .hda{fill:#0b7f86}
+  .okl{fill:none;stroke:#2f7d3b;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+  .badl{fill:none;stroke:#a23a2a;stroke-width:2.4;stroke-linecap:round}
+  .cA{fill:#d9eff0;stroke:#0b7f86;stroke-width:1.2} .cB{fill:#f6e6d2;stroke:#b8650a;stroke-width:1.2}</style><rect width="360" height="130" fill="#f2f4f5"/><rect class="s" x="8" y="26" width="96" height="46" rx="3"/><text x="56" y="45" class="lbl" text-anchor="middle">source rows</text><text x="56" y="61" text-anchor="middle">1,240</text><text x="118" y="54" class="lbl" text-anchor="middle">=</text><rect class="s2" x="132" y="26" width="90" height="46" rx="3"/><text x="177" y="45" class="lbl" text-anchor="middle">loaded</text><text x="177" y="61" text-anchor="middle">1,231</text><text x="236" y="54" class="lbl" text-anchor="middle">+</text><rect class="n" x="250" y="26" width="102" height="46" rx="3"/><text x="301" y="45" class="lbl" text-anchor="middle">conflict log</text><text x="301" y="61" text-anchor="middle">9</text><path class="okl" d="M112 98l4 4 8-9"/><text x="132" y="102" class="ok" text-anchor="start">VERIFY OK, otherwise the step fails</text><text x="180" y="124" class="mut" text-anchor="middle">(example numbers)</text></svg>
