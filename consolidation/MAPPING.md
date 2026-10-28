@@ -4,6 +4,10 @@ This merges the `cwp*` PostgreSQL databases (schema exports in `../pgdump_schema
 
 ## How it works
 
+There are two copy methods. They run the same merge SQL and give the same result; they differ only in how the target reaches the sources and in the rights they need.
+
+**Direct** (default): the target server reads the sources itself through postgres_fdw.
+
 ```
  source DBs (cwp_ecr ... cwp2)                     target: MtrMigration_Consolidated
  ┌──────────────┐  postgres_fdw  ┌──────────────────────────────────────────────┐
@@ -16,23 +20,74 @@ This merges the `cwp*` PostgreSQL databases (schema exports in `../pgdump_schema
                                  └──────────────────────────────────────────────┘
 ```
 
+**Through this PC** (staging): for a login that may only create tables in schema `public`. No new schemas and no postgres_fdw. The computer running the tool copies every source table into a staging table in `public` (`COPY … TO STDOUT` from the source piped into `COPY … FROM STDIN` on the target), and the `_merge` schema becomes tables named `public._merge_*`.
+
+```
+ source DBs              this PC                 target (e.g. cwp2), schema public only
+ ┌──────────┐  COPY  ┌──────────┐  COPY  ┌────────────────────────────────────────────┐
+ │ cwp_ecr  │ ─────▶ │  psql |  │ ─────▶ │ "src_cwp_ecr__Files", ... (staging tables) │
+ │ ...      │ ─────▶ │  psql    │ ─────▶ │ ...                                        │
+ └──────────┘        └──────────┘        │ public.*         ← same merge SQL          │
+                                         │ public._merge_*  ← ID offsets, conflicts   │
+                                         └────────────────────────────────────────────┘
+```
+
+It is slower: all source data crosses the network twice, and until **detach** the target holds an extra copy of the source data in the staging tables.
+
 | Step | File | What it does |
 |---|---|---|
-| generate | `generate.py` | Reads `sources.json` and the 9 dumps, then writes the per-source SQL. It stops with an error if any source column has no place in the target, so data can't be lost silently. |
-| schema | `sql/00_target_schema.sql` | Creates the superset schema with PKs, unique constraints and functions, plus the `_merge` bookkeeping schema. |
-| attach | `sql/01_attach_sources.sql` | Creates one postgres_fdw server per source and imports it as `src_<name>`. |
+| generate | `generate.py` | Reads `sources.json` and the 9 dumps, then writes the per-source SQL. It stops with an error if any source column has no place in the target, so data can't be lost silently. With `--staging` it writes every script, rewritten for the staging layout, to `sql_staging/`. |
+| schema | `sql/00_target_schema.sql` | Creates the superset schema with PKs, unique constraints and functions, plus the `_merge` bookkeeping schema. It runs as one transaction, so a failure leaves the target empty. |
+| attach | `sql/01_attach_sources.sql` | **Direct:** creates one postgres_fdw server per source and imports it as `src_<name>`. **Through this PC:** creates the staging tables `public."src_<name>__<table>"`, then `generate.py --staging --copy` fills them. |
 | preflight | `sql/02_preflight.sql` | **Read-only.** Reports row counts, cross-source overlaps, and whether the new ID ranges fit in `integer`. |
 | merge | `sql/03_merge.sql` | Copies every table from every source in **one transaction**. |
 | finalize | `sql/04_finalize.sql` | Adds secondary indexes (the union across all sources, plus 38 new ones based on the app's queries), FKs and `v_MigrationSummary`, and resets the sequences. |
 | verify | `sql/05_verify.sql` | Checks that every source row was either loaded or written to `_merge.conflict_log`. If not, it **raises an error**. |
-| detach | `sql/06_detach_sources.sql` | Drops the fdw links. The `_merge` audit schema is kept. |
+| detach | `sql/06_detach_sources.sql` | Drops the fdw links (Direct) or the staging tables (Through this PC). The `_merge` audit tables are kept. |
 
 ## Running it
 
-Requirements:
-- The target server runs PostgreSQL 18, the same version as the sources (the dumps are from 18.4).
-- The `postgres_fdw` extension is available. It ships in the standard and alpine images.
-- The target server can reach every source server.
+Both the desktop app and the PowerShell script need the target server to run PostgreSQL 18, the same version as the sources (the dumps are from 18.4).
+
+### Rights needed
+
+The target login (or the role it switches to with **Set role** / `-Role`) needs:
+
+| | Direct | Through this PC |
+|---|---|---|
+| Target database | `CREATE` on the database (for the `_merge` and `src_*` schemas), or `CREATEDB` to create a new one | only `USAGE, CREATE` on schema `public` of an existing, empty database |
+| postgres_fdw | the extension installed in the target (a superuser runs `CREATE EXTENSION postgres_fdw`) and `USAGE` on it | not used |
+| Source login | a login **with a password** that can `SELECT` the sources (postgres_fdw requires a password for non-superusers) | any login that can `SELECT` the sources, Kerberos included |
+| Network | the **target server** reaches every source server | **this PC** reaches the target and every source server |
+
+`../cwp2_migration_grants.sql` is a ready-made grant script for a DBA, for the Direct method into `cwp2`. If the DBA won't grant those rights, use **Through this PC**.
+
+### Desktop app: `dist\MtrDbMigration.exe`
+
+The exe is a single file with its own `psql.exe`; no Python or PostgreSQL install is needed. Copy it to a folder you can write to: it keeps `sources.json`, `migrate_settings.json` (never passwords), `migration_work\` and `logs\` next to itself. Rebuild it with `.\build_exe.ps1`.
+
+| Setting | What it does |
+|---|---|
+| **Target server**: Host, Port, User, Password | Target login. **Test connection** shows the login, the role it runs as, and the server version. |
+| **Kerberos (Windows login, no password)** | Logs in as the signed-in Windows (domain) user. **Host** must be the server's full DNS name (its `postgres/<host>` SPN), and the server needs a `gss`/`sspi` line in `pg_hba.conf` for your PC. |
+| **Set role (optional)** | Every target session starts as `SET ROLE <role>`, e.g. the group `cwp_mig_prd`, so all objects are created and owned by that role. Your login must be a member of it. `SET ROLE cwp_mig_prd;` can be pasted as-is. |
+| **Source login**: User, Password | Login used to read the sources. **Test source logins** connects to every listed source database and reports OK/FAIL for each. |
+| **No password (Kerberos / trust, superuser)** | Direct only: postgres_fdw links without a password (superuser only). |
+| **Source databases** | One per line, highest priority first. **Load all from server** fills the list. |
+| **Copy method** | **Direct** or **Through this PC** (see above). Step 2, Finish and the table list detect which method a target was built with. |
+| **Drop existing target (delete the database)** | Drops and re-creates the target. Only allowed for a database this tool built (one with `_merge` tables), never for a source. |
+| **Clear existing target (drop all tables, keep database)** | Drops every table, view, function, schema and foreign server inside the target, but keeps the database, its owner and grants. Use it to rebuild into a database the DBA created, such as `cwp2`. |
+
+An existing target database is used as-is if it is completely empty; otherwise Step 1 stops and lists what is left in it. Then:
+
+1. **Run step 1** creates every table, links or stages the sources, writes the preflight report, and adds indexes and keys. With **Through this PC** it also copies all source rows into the staging tables.
+2. **Step 2**: tick tables and click **Copy data of ticked tables**. Repeat as often as needed. Parent tables are added automatically, and ticking a loaded table reloads it (with its children). Each copy is verified.
+3. **Build Metadata Matrix** (optional) builds `MetadataMatrix`, with one column per metadata key.
+4. **Finish: remove source links / copies** drops the fdw links or the staging tables. To copy more afterwards, run step 1 again.
+
+### PowerShell script: `run_consolidation.ps1`
+
+Needs `psql` and Python on the PC.
 
 ```powershell
 cd consolidation
@@ -46,9 +101,31 @@ $env:PGPASSWORD = '<target admin password>'
 .\run_consolidation.ps1 -PgHost <server> -Steps detach
 ```
 
-When everything runs inside the `mtr-postgres` container, add `-DockerContainer mtr-postgres` and leave `host` set to `localhost` in `sources.json`. Logs are written to `logs/`.
+Kerberos login working as the group `cwp_mig_prd`, through this PC, into the existing empty `cwp2` (no new grants needed). Add `-Steps detach` to the same options once verify says OK:
 
-Then point the GUI's connection string at `Database=MtrMigration_Consolidated`.
+```powershell
+.\run_consolidation.ps1 -Kerberos -Role cwp_mig_prd -Staging -UseExistingTarget -TargetDb cwp2 `
+    -PgHost HQSCWPD001v.corp.mtrc.com -User ssishadm_prj1 -SrcUser ssishadm_prj1
+```
+
+| Option | What it does |
+|---|---|
+| `-PgHost`, `-Port`, `-User` | Target server and login. The password comes from `$env:PGPASSWORD` (or a `.pgpass`). |
+| `-TargetDb` | Target database (default: `target_dbname` in `sources.json`). |
+| `-Kerberos`, `-KrbSrvName` | Log in to the target as the signed-in Windows user, with no password (`$env:PGPASSWORD` is ignored). `-PgHost` must be the server's full DNS name. If the server asks for a password anyway, psql fails at once instead of waiting at a prompt. |
+| `-Role` | Every target session starts as `SET ROLE <role>`. Source logins don't use it. |
+| `-SrcUser`, `-SrcPassword` | Source login. With `-Staging` and no `-SrcPassword`, the sources are read with Kerberos too. |
+| `-SrcNoPassword` | Direct only: postgres_fdw user mappings without a password (superuser only). |
+| `-Staging` | **Through this PC.** The scripts come from `sql_staging/`, and `attach` copies the sources into staging tables. `sql/` is not touched. |
+| `-UseExistingTarget` | Build into an existing **empty** database instead of `CREATE DATABASE`. Refuses if it holds any table, view or sequence. |
+| `-DropExistingTarget` | Drop and re-create the target. Only allowed for a database this script built (one with `_merge` tables). |
+| `-Steps` | Run only these steps (see the table above). Default: everything except `detach`. |
+| `-Yes` | Don't ask for confirmation after the preflight report. |
+| `-DockerContainer`, `-PsqlPath` | Run psql inside a container / use a specific `psql.exe`. |
+
+The script changes `PGPASSWORD`, `PGOPTIONS` and `PGKRBSRVNAME` only while it runs, and restores your previous values at the end. It works in Windows PowerShell 5.1 and PowerShell 7. When everything runs inside the `mtr-postgres` container, add `-DockerContainer mtr-postgres` and leave `host` set to `localhost` in `sources.json`. Logs are written to `logs/`.
+
+Then point the GUI's connection string at the target database, e.g. `Database=MtrMigration_Consolidated`.
 
 ## ID strategy: per-source offsets
 
@@ -134,7 +211,7 @@ The core tables keep the column layout from `mtr-phase3/scripts/init.sql` and `i
 - **Undo (Path Analysis tab)** reverts the most recent successful *Apply Path Change* across **all** merged sources. Before, it only looked within one DB.
 - **Tasks in Status=1 (Processing)** at merge time had been claimed by workers in the old DBs. `reset_stale_tasks()` requeues them; preflight section I counts them.
 - **`Folder_Structure_Final_Analysis` / `MigrationTasks_Parsed`** reflect each source's last analysis. Re-run *Analyze* in the GUI for a fresh combined view.
-- **Stopping writes during the merge**: stop workers and the GUI against the source DBs while it runs. The merge reads the sources live.
+- **Stopping writes during the merge**: stop workers and the GUI against the source DBs while it runs. The Direct method reads the sources live during the merge. Through this PC reads them once, during the copy into the staging tables, so changes made after that are not picked up.
 
 ## Audit queries
 
@@ -149,6 +226,8 @@ SELECT * FROM _merge.id_offset ORDER BY table_name, id_offset;
 DROP SCHEMA _merge CASCADE;
 ```
 
+A target built **Through this PC** has the same tables and functions in `public` instead: write `public._merge_conflict_log`, `public._merge_source_of(...)`, `public._merge_id_offset` and so on. To remove them, drop the `public._merge_*` tables and functions.
+
 ## Tested
 
 The pipeline was run end to end on PostgreSQL 16.4 against 9 source DBs built from the real dumps. The PG18-only lines (`\restrict`, `transaction_timeout`, named NOT NULL) were stripped for that test. The test data had ID gaps and deliberate overlaps: a shared site, a shared AD group, a GUID clash, a sitemapping clash, and dangling TaskIds.
@@ -156,3 +235,9 @@ The pipeline was run end to end on PostgreSQL 16.4 against 9 source DBs built fr
 - `05_verify`: all OK.
 - A natural-key comparison of every parent/child relationship per source found 0 differences. It checked Metadata, Permissions and Tasks against file paths, members against group names, the path history against tasks and ops, the `LastResolvedFileId` cursor, and Parsed against Tasks.
 - The FKs were created without error, and the sequences continue after the merged max.
+
+The two copy methods were checked against each other on PostgreSQL 18 with 3 sources built from the real `cwp_ecr`, `cwp_opspj4` and `cwp2` dumps (1,220 rows with deliberate overlaps):
+
+- **Through this PC** ran with only `CREATE` on schema `public`, in both the app (with **Set role**) and the script (`-Staging`, under PowerShell 5.1 and 7). The script was also run with `-Kerberos -Role`, using Windows SSPI single sign-on in place of a domain Kerberos server.
+- Every run passed verify, and Direct and Through this PC produced **identical rows** in every table (same IDs, SiteIds and conflict log).
+- Not tested yet: a real Kerberos domain login, Docker in the staging mode, and production data volumes.

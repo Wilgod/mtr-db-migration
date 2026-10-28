@@ -167,6 +167,7 @@ BEGIN
     FOR t IN
         SELECT c.table_name FROM information_schema.columns c
         WHERE c.table_schema = 'public' AND c.column_name = 'SiteId' AND c.table_name <> 'Sites'
+          AND c.table_name NOT LIKE 'src\_%\_\_%'  -- staging copies of the sources ("Through this PC")
         ORDER BY 1
     LOOP
         EXECUTE format('CREATE INDEX %I ON public.%I USING btree ("SiteId")', 'IX_' || t || '_SiteId', t);

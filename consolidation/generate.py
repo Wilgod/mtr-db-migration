@@ -29,12 +29,28 @@ host), MTR_DOCKER (run psql inside this container).
 Tables with a rule in LOAD_ORDER are merged by those rules. Any other table
 (except bak_*) is copied as-is into a generated table: union of its columns
 over all sources plus a source tag column; no de-duplication.
+
+Staging layout ("Through this PC": MtrDbMigration, run_consolidation.ps1 -Staging):
+for a login that may only create tables in schema public. No postgres_fdw and no
+new schemas: every source table is copied by the client into a staging table
+public."src_<source>__<table>" (see stage() / copy_to_stage()), and the _merge
+schema becomes tables public._merge_* (flatten_merge()). The merge SQL is the same.
+
+    python generate.py --staging          # writes every script, static ones included,
+                                          # rewritten for staging into sql_staging/
+    python generate.py --staging --copy   # copy the sources into the staging tables
+                                          # (after sql_staging/01_attach_sources.sql);
+                                          # target from env MTR_TARGET_DB, MTR_TARGET_USER,
+                                          # MTR_TARGET_HOST, MTR_TARGET_PORT, PGPASSWORD,
+                                          # PGOPTIONS / PGKRBSRVNAME (target only)
 """
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DUMP_DIR = os.path.join(HERE, "..", "pgdump_schema")
@@ -211,21 +227,29 @@ def psql_schema_loader(cmd_for):
 
 def cli_schema_loader():
     """Live loader for `python generate.py`, configured from MTR_* env vars."""
+    return psql_schema_loader(cli_source_cmd())
+
+
+def cli_source_cmd():
+    """cmd_for(source) -> (psql argv, env) from MTR_* env vars (CLI)."""
     user = os.environ.get("MTR_SRC_USER", "postgres")
     env = dict(os.environ, PGPASSWORD=os.environ.get("MTR_SRC_PASSWORD", os.environ.get("PGPASSWORD", "")),
                PGCLIENTENCODING="UTF8")
+    env.pop("PGOPTIONS", None)  # the target's role (run_consolidation.ps1 -Role) is not for the sources
+    if not env["PGPASSWORD"]:
+        del env["PGPASSWORD"]  # no password: Kerberos/SSPI or trust decides
     docker = os.environ.get("MTR_DOCKER")
 
     def cmd_for(s):
         host, port = s["host"], s["port"]
         if docker:
-            return ["docker", "exec", "-i", "-e", "PGPASSWORD=" + env["PGPASSWORD"], docker, "psql",
+            return ["docker", "exec", "-i", "-e", "PGPASSWORD=" + env.get("PGPASSWORD", ""), docker, "psql",
                     "-h", host, "-p", str(port), "-U", user, "-d", s["dbname"]], env
         if host in LOCAL_HOSTS and os.environ.get("MTR_SCHEMA_HOST"):
             host = os.environ["MTR_SCHEMA_HOST"]
             port = os.environ.get("MTR_SCHEMA_PORT", port)
         return [os.environ.get("MTR_PSQL", "psql"), "-h", host, "-p", str(port), "-U", user, "-d", s["dbname"]], env
-    return psql_schema_loader(cmd_for)
+    return cmd_for
 
 
 def user_type_base(defn):
@@ -251,13 +275,29 @@ def lit(s):
     return "'" + str(s).replace("'", "''") + "'"
 
 
+def flatten_merge(sql_text):
+    """Staging layout: schema _merge -> tables public._merge_* (no CREATE SCHEMA needed)."""
+    sql_text = re.sub(r"^CREATE SCHEMA _merge;\n", "", sql_text, flags=re.M)
+    return re.sub(r"\b_merge\.", "public._merge_", sql_text)
+
+
+def stage_table(source, table):
+    """Staging table name for a source table; over 63 bytes it is cut and given a hash."""
+    name = f"src_{source}__{table}"
+    if len(name.encode("utf-8")) > 63:
+        h = hashlib.md5(name.encode("utf-8")).hexdigest()[:8]
+        name = name.encode("utf-8")[:54].decode("utf-8", errors="ignore") + "_" + h
+    return name
+
+
 # ---------------------------------------------------------------------------
 # SQL builders
 # ---------------------------------------------------------------------------
 
 class Gen:
-    def __init__(self, cfg, schema_loader=None):
+    def __init__(self, cfg, schema_loader=None, staging=False):
         self.cfg = cfg
+        self.staging = staging
         self.sources = []
         for s in cfg["sources"]:
             s = {"dbname": s} if isinstance(s, str) else dict(s)
@@ -366,6 +406,8 @@ class Gen:
         return col is None or col in s["tables"][table]
 
     def ft(self, s, table):
+        if self.staging:
+            return f"public.{q(stage_table(s['name'], table))}"
         return f"{q(s['schema'])}.{q(table)}"
 
     @staticmethod
@@ -412,7 +454,64 @@ class Gen:
                        f"({lit(s['name'])}, {self.sources.index(s) + 1}, {lit(s['schema'])});\n")
         return "\n".join(out)
 
+    # -- 01 staging layout: tables the client fills with COPY -------------------
+    def staged_tables(self, s):
+        return [t for t in sorted(s["tables"]) if not EXCLUDED.match(t)]
+
+    def stage(self):
+        out = [HEADER.format(name="01_attach_sources.sql", what=
+            "Staging layout: one table public.\"src_<source>__<table>\" per source table.\n"
+            "-- MtrDbMigration fills them through the client (COPY source TO STDOUT | COPY target FROM STDIN).\n"
+            "-- User-defined column types (enums, domains) are stored as text."),
+            "CREATE TABLE _merge.stage (\n    source_db   varchar(64) NOT NULL REFERENCES _merge.source,\n"
+            "    table_name  text NOT NULL,\n    stage_table text NOT NULL UNIQUE,\n    row_count   bigint,\n"
+            "    PRIMARY KEY (source_db, table_name)\n);\n"]
+        seen = {}
+        for i, s in enumerate(self.sources, 1):
+            tables = self.staged_tables(s)
+            out.append(f"-- {s['name']}  ({len(tables)} tables)")
+            out.append(f"INSERT INTO _merge.source (source_db, load_order, foreign_schema) VALUES "
+                       f"({lit(s['name'])}, {i}, 'public');")
+            for t in tables:
+                st = stage_table(s["name"], t)
+                if st in seen:
+                    sys.exit(f"staging table name {st} is used by {seen[st]} and {s['name']}.{t}")
+                seen[st] = f"{s['name']}.{t}"
+                cols = [f"{q(c)} {col_type(d)}" for c, d in s["tables"][t].items()]
+                out.append(f"CREATE UNLOGGED TABLE public.{q(st)} (\n    " + ",\n    ".join(cols) + "\n);")
+                out.append(f"INSERT INTO _merge.stage (source_db, table_name, stage_table) VALUES "
+                           f"({lit(s['name'])}, {lit(t)}, {lit(st)});")
+            out.append("")
+        return "\n".join(out)
+
+    def stage_copies(self):
+        """[(source, table, staging table, COPY ... TO STDOUT for the source, COPY ... FROM STDIN for the target)]"""
+        out = []
+        for s in self.sources:
+            for t in self.staged_tables(s):
+                cols = s["tables"][t]
+                sel = ", ".join(q(c) + ("::text" if col_type(d) != user_type_base(d) else "") for c, d in cols.items())
+                st = stage_table(s["name"], t)
+                out.append((s, t, st, f"COPY (SELECT {sel} FROM public.{q(t)}) TO STDOUT",
+                            f"COPY public.{q(st)} (" + ", ".join(q(c) for c in cols) + ") FROM STDIN"))
+        return out
+
+    def stage_counts_sql(self, counts):
+        """After copy_to_stage(): record the row counts, then ANALYZE the staging tables."""
+        if not counts:
+            return ""
+        return ("UPDATE _merge.stage g SET row_count = v.n FROM (VALUES\n    "
+                + ",\n    ".join(f"({lit(st)}, {n})" for st, n in counts) + "\n) v(st, n) WHERE g.stage_table = v.st;\n"
+                + "ANALYZE " + ",\n    ".join(f"public.{q(st)}" for st, _ in counts) + ";\n")
+
     def detach(self):
+        if self.staging:
+            out = [HEADER.format(name="06_detach_sources.sql", what=
+                "Drop the staging copies of the sources once 05_verify.sql is clean. Keeps the _merge audit tables."),
+                "SET client_min_messages = warning;"]
+            out.extend(f"DROP TABLE IF EXISTS public.{q(stage_table(s['name'], t))};"
+                       for s in self.sources for t in self.staged_tables(s))
+            return "\n".join(out) + "\n"
         out = [HEADER.format(name="06_detach_sources.sql", what=
             "Remove the postgres_fdw links once 05_verify.sql is clean. Keeps the _merge audit schema."),
             "SET client_min_messages = warning;"]
@@ -834,22 +933,107 @@ END $$;
 """
 
 
-def main(schema_loader=None):
+def _pump(src, dst):
+    """Copy COPY-text data from src to dst in chunks. A raw Ctrl-Z (0x1A) in the data is
+    written as the COPY escape \\x1a: psql on Windows reads its stdin in text mode, where
+    Ctrl-Z means end of file, so the row would be cut off there. Lossless: COPY decodes
+    \\x1a back to the same byte, and every real backslash is already escaped as \\\\."""
+    try:
+        while True:
+            chunk = src.read(1 << 20)
+            if not chunk:
+                break
+            dst.write(chunk.replace(b"\x1a", b"\\x1a"))
+    except OSError:
+        pass  # the target psql stopped (it reports why); the source then fails too
+    finally:
+        for f in (dst, src):
+            try:
+                f.close()
+            except OSError:
+                pass
+
+
+def copy_to_stage(g, source_cmd, target_cmd, log=print, progress=None):
+    """Staging layout: pipe every source table into its staging table through this
+    client (source psql COPY ... TO STDOUT -> _pump -> target psql COPY ... FROM STDIN).
+    source_cmd(s) and target_cmd() -> (psql argv up to the connection args, env).
+    Returns [(staging table, rows)]; raises RuntimeError on the first failure."""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    copies = g.stage_copies()
+    counts = []
+    for i, (s, t, st, out_sql, in_sql) in enumerate(copies, 1):
+        if progress:
+            progress(i, len(copies), s, t)
+        src_argv, src_env = source_cmd(s)
+        dst_argv, dst_env = target_cmd()
+        src = subprocess.Popen(src_argv + ["-X", "-w", "-q", "-v", "ON_ERROR_STOP=1", "-c", out_sql],
+                               env=src_env, creationflags=flags, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        dst = subprocess.Popen(dst_argv + ["-X", "-w", "-v", "ON_ERROR_STOP=1", "-c", in_sql],
+                               env=dst_env, creationflags=flags, stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        src_err = []
+        threads = [threading.Thread(target=_pump, args=(src.stdout, dst.stdin), daemon=True),
+                   threading.Thread(target=lambda: src_err.append(src.stderr.read()), daemon=True)]
+        for th in threads:
+            th.start()
+        dst_out = dst.stdout.read().decode("utf-8", errors="replace").strip()
+        dst.wait()
+        if dst.returncode != 0:
+            src.kill()  # the target gave up: don't keep the source streaming
+        src.wait()
+        for th in threads:
+            th.join()
+        m = re.search(r"^COPY (\d+)$", dst_out, re.M)
+        if src.returncode != 0 or dst.returncode != 0 or not m:
+            err = b"".join(src_err).decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"copy {s['name']}.{t} -> {st} failed:\n{err}\n{dst_out}".rstrip())
+        counts.append((st, int(m.group(1))))
+        log(f"{s['name']}.{t}: {int(m.group(1)):,} rows")
+    log(f"staged {len(copies)} tables, {sum(n for _, n in counts):,} rows")
+    return counts
+
+
+def cli_target_cmd():
+    """Target connection for `python generate.py --staging --copy` (MTR_TARGET_* env;
+    PGPASSWORD, PGOPTIONS (role) and PGKRBSRVNAME as run_consolidation.ps1 sets them)."""
+    user, db = os.environ.get("MTR_TARGET_USER", "postgres"), os.environ["MTR_TARGET_DB"]
+    env = dict(os.environ, PGCLIENTENCODING="UTF8")
+    docker = os.environ.get("MTR_DOCKER")
+    if docker:
+        opts = ["-e", "PGOPTIONS=" + env["PGOPTIONS"]] if env.get("PGOPTIONS") else []
+        return lambda: (["docker", "exec", "-i", "-e", "PGPASSWORD=" + env.get("PGPASSWORD", ""), *opts, docker, "psql",
+                         "-U", user, "-d", db], env)
+    return lambda: ([os.environ.get("MTR_PSQL", "psql"), "-h", os.environ.get("MTR_TARGET_HOST", "localhost"),
+                     "-p", os.environ.get("MTR_TARGET_PORT", "5432"), "-U", user, "-d", db], env)
+
+
+def main(schema_loader=None, staging=False, out_dir=None):
+    """Write the scripts to out_dir (default sql/). The CLI's --staging writes to
+    sql_staging/ and also copies the static scripts there, rewritten for staging."""
     with open(os.path.join(HERE, "sources.json"), encoding="utf-8") as f:
         cfg = json.load(f)
-    g = Gen(cfg, schema_loader or cli_schema_loader())
+    out_dir = out_dir or SQL_DIR
+    g = Gen(cfg, schema_loader or cli_schema_loader(), staging=staging)
     files = {
-        "01_attach_sources.sql": g.attach(),
+        "01_attach_sources.sql": g.stage() if staging else g.attach(),
         "02_preflight.sql": g.preflight(),
         "03_merge.sql": g.merge(),
         "03_prepare.sql": g.prepare(),
         "05_verify.sql": g.verify(),
         "06_detach_sources.sql": g.detach(),
     }
+    if out_dir != SQL_DIR:
+        os.makedirs(out_dir, exist_ok=True)
+        for name in sorted(os.listdir(SQL_DIR)):  # static scripts (00, 04, 04b) as well
+            if name.endswith(".sql") and name not in files:
+                with open(os.path.join(SQL_DIR, name), encoding="utf-8") as f:
+                    files[name] = f.read()
     for name, text in files.items():
-        with open(os.path.join(SQL_DIR, name), "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
-        print(f"wrote sql/{name}")
+        with open(os.path.join(out_dir, name), "w", encoding="utf-8", newline="\n") as f:
+            f.write(flatten_merge(text) if staging else text)
+        print(f"wrote {os.path.basename(out_dir)}/{name}")
     print("sources:", ", ".join(f"{i}.{s['name']}" + ("" if s.get("dump") else " (live schema)")
                                 for i, s in enumerate(g.sources, 1)))
     if g.generic:
@@ -858,4 +1042,21 @@ def main(schema_loader=None):
 
 
 if __name__ == "__main__":
-    main()
+    if "--staging" not in sys.argv:
+        main()
+    else:
+        out = os.path.join(HERE, "sql_staging")
+        gen = main(staging=True, out_dir=out)
+        if "--copy" in sys.argv:
+            target = cli_target_cmd()
+            try:
+                counts = copy_to_stage(gen, cli_source_cmd(), target)
+            except RuntimeError as e:
+                sys.exit(str(e))
+            path = os.path.join(out, "01b_stage_counts.sql")
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(flatten_merge(gen.stage_counts_sql(counts)))
+            argv, env = target()
+            r = subprocess.run(argv + ["-X", "-w", "-q", "-v", "ON_ERROR_STOP=1", "-f", path], env=env)
+            if r.returncode != 0:
+                sys.exit("recording the staging row counts failed")

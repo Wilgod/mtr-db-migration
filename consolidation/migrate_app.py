@@ -10,6 +10,10 @@ exe by build_exe.ps1. Two steps:
           reloads it. "Build Metadata Matrix" then makes MetadataMatrix: one row
           per file, one column per distinct MetadataKey (Metadata unchanged).
 
+The "Compare databases" tab lists the tables and columns that differ between
+two databases on the target server (e.g. cwp_ecr and cwp) and can add the
+missing ones to the second so it matches the first (schema_compare.py).
+
 The exe carries everything it needs: generate.py, sql/ and a private copy of
 psql.exe + DLLs. Only the source database names are needed: each source's
 schema is read live. Next to the exe it keeps:
@@ -36,6 +40,7 @@ from datetime import datetime
 from tkinter import messagebox, scrolledtext, ttk
 
 import generate
+import schema_compare
 
 # metadata_matrix.py lives with the Metadata Horizontal tool (bundled into the exe)
 sys.path.insert(1, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "metadata_horizontal"))
@@ -136,16 +141,26 @@ PLAN_QUERY = """SELECT p.table_name, p.kind, array_to_string(p.depends_on, ', ')
        COALESCE(to_char(l.loaded_at, 'YYYY-MM-DD HH24:MI'), '')
 FROM _merge.table_plan p LEFT JOIN _merge.loaded_table l USING (table_name)
 ORDER BY p.load_order"""
-# Columns of public.<t> (source '') and of each source's linked foreign table src_<name>.<t>.
+# Columns of public.<t> (source '') and of each source's linked foreign table src_<name>.<t>
+# (staging layout: its staging table, from _merge.stage).
 COLUMNS_QUERY = """SELECT src, attname, typ FROM (
     SELECT '' AS src, 0 AS ord, a.attnum, a.attname, format_type(a.atttypid, a.atttypmod) AS typ
     FROM pg_attribute a WHERE a.attrelid = to_regclass(format('public.%I', '{t}'))
       AND a.attnum > 0 AND NOT a.attisdropped
     UNION ALL
     SELECT s.source_db, s.load_order, a.attnum, a.attname, format_type(a.atttypid, a.atttypmod)
-    FROM _merge.source s JOIN pg_attribute a ON a.attrelid = to_regclass(format('%I.%I', s.foreign_schema, '{t}'))
+    FROM _merge.source s JOIN pg_attribute a ON a.attrelid = {source_rel}
     WHERE a.attnum > 0 AND NOT a.attisdropped
 ) c ORDER BY ord, attnum"""
+SOURCE_REL_DIRECT = "to_regclass(format('%I.%I', s.foreign_schema, '{t}'))"
+SOURCE_REL_STAGING = ("(SELECT to_regclass(format('public.%I', g.stage_table)) FROM _merge.stage g "
+                      "WHERE g.source_db = s.source_db AND g.table_name = '{t}')")
+# How many source links (direct) / staging copies (through this PC) are still there.
+LINKS_DIRECT = "SELECT count(*) FROM pg_foreign_server WHERE srvname LIKE 'srv\\_%'"
+LINKS_STAGING = "SELECT count(*) FROM _merge.stage WHERE to_regclass(format('public.%I', stage_table)) IS NOT NULL"
+# Which layout an existing target was built with.
+LAYOUT_QUERY = ("SELECT CASE WHEN to_regclass('public._merge_source') IS NOT NULL THEN 'staging' "
+                "WHEN to_regclass('_merge.source') IS NOT NULL THEN 'direct' ELSE '' END")
 
 
 def find_psql():
@@ -255,31 +270,60 @@ class Runner:
         host, port = (c["host"], c["port"]) if s["host"] in generate.LOCAL_HOSTS else (s["host"], s["port"])
         return [self.psql, "-h", host, "-p", str(port), "-U", c["src_user"], "-d", s["dbname"]], env
 
+    def layout(self, target):
+        """'direct' (postgres_fdw + _merge schema), 'staging' (through this PC) or '' (not built)."""
+        return self.psql_scalar(target, LAYOUT_QUERY)
+
+    @staticmethod
+    def m(sql, staging):
+        """SQL naming _merge.<x> -> public._merge_<x> for the staging layout."""
+        return generate.flatten_merge(sql) if staging else sql
+
     # ---------- work ----------
-    def generate(self):
+    def generate(self, staging):
         """Refresh migration_work\\ from the bundle and regenerate from sources.json."""
         self.section("generate")
         os.makedirs(WORK_SQL, exist_ok=True)
         for name in os.listdir(os.path.join(RES_CONS, "sql")):
-            shutil.copy2(os.path.join(RES_CONS, "sql", name), os.path.join(WORK_SQL, name))
+            with open(os.path.join(RES_CONS, "sql", name), encoding="utf-8") as f:
+                text = f.read()
+            with open(os.path.join(WORK_SQL, name), "w", encoding="utf-8", newline="\n") as f:
+                f.write(self.m(text, staging))
         shutil.copy2(SOURCES_FILE, os.path.join(WORK_DIR, "sources.json"))
         generate.HERE, generate.SQL_DIR, generate.DUMP_DIR = WORK_DIR, WORK_SQL, RES_DUMPS
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
-                return generate.main(generate.psql_schema_loader(self.source_cmd))
+                return generate.main(generate.psql_schema_loader(self.source_cmd), staging=staging)
         except SystemExit as e:
             raise StepFailed(f"generate failed: {e}")
         finally:
             self.log(buf.getvalue().rstrip())
+            self.log("layout: " + ("through this PC (staging tables in public)" if staging
+                                   else "direct (postgres_fdw links)"))
+
+    def stage_data(self, g, target):
+        """Through this PC: copy every source table into its staging table (generate.copy_to_stage)."""
+        def progress(i, n, s, t):
+            self.out.put(("step", f"copy to staging {i}/{n}: {s['name']}.{t}"))
+        try:
+            counts = generate.copy_to_stage(g, self.source_cmd, lambda: (self._cmd(target, []), self.env),
+                                            log=self.log, progress=progress)
+        except RuntimeError as e:
+            raise StepFailed(str(e))
+        if counts:  # in a file: hundreds of tables would not fit on a command line
+            path = self.sql(f"stage_counts_{self.stamp}.sql")
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(self.m(g.stage_counts_sql(counts), True))
+            self.psql_run(target, "stage_counts", file=path, extra_args=["-q"])
 
     def sql(self, name):
         return os.path.join(WORK_SQL, name)
 
     def step1(self):
         """Create the target with every table and link the sources; no rows copied."""
-        target = self.cfg["target"]
-        self.generate()
+        target, staging = self.cfg["target"], self.cfg["staging"]
+        g = self.generate(staging)
         self.section("create")
         exists = self.psql_scalar("postgres", f"SELECT 1 FROM pg_database WHERE datname = '{target}'")
         if exists == "1" and not self.cfg["drop_existing"]:
@@ -299,9 +343,9 @@ class Runner:
             self.log(f"Database {target} already exists and is empty: using it (not created, not dropped).")
         else:
             if exists == "1":
-                # Only drop a database this tool built (00_target_schema.sql creates _merge), never a source.
-                if self.psql_scalar(target, "SELECT 1 FROM pg_namespace WHERE nspname = '_merge'") != "1":
-                    raise StepFailed(f"Database {target} exists and was not built by this tool (no _merge schema), "
+                # Only drop a database this tool built (it has _merge, either layout), never a source.
+                if not self.layout(target):
+                    raise StepFailed(f"Database {target} exists and was not built by this tool (no _merge tables), "
                                      "so it will not be dropped. Use 'Clear existing target' instead (keeps the "
                                      "database, drops its tables), or pick a new Target DB name.")
                 self.psql_run("postgres", "drop", command=f'DROP DATABASE "{target}" WITH (FORCE)')
@@ -309,10 +353,16 @@ class Runner:
         self.section("schema")
         # one transaction: a failure (e.g. no CREATE right for _merge) leaves the target empty, not half-built
         self.psql_run(target, "schema", file=self.sql("00_target_schema.sql"), extra_args=["--single-transaction"])
-        self.section("attach")
-        self.psql_run(target, "attach", file=self.sql("01_attach_sources.sql"),
-                      variables=[f"src_user={self.cfg['src_user']}", f"src_password={self.cfg['src_password']}",
-                                 f"src_kerberos={'true' if self.cfg['src_kerberos'] else 'false'}"])
+        if staging:
+            self.section("staging tables")
+            self.psql_run(target, "stage", file=self.sql("01_attach_sources.sql"), extra_args=["-q", "--single-transaction"])
+            self.section("copy sources to staging (through this PC)")
+            self.stage_data(g, target)
+        else:
+            self.section("attach")
+            self.psql_run(target, "attach", file=self.sql("01_attach_sources.sql"),
+                          variables=[f"src_user={self.cfg['src_user']}", f"src_password={self.cfg['src_password']}",
+                                     f"src_kerberos={'true' if self.cfg['src_kerberos'] else 'false'}"])
         self.section("preflight")
         self.psql_run(target, "preflight", file=self.sql("02_preflight.sql"))
         self.section("prepare")
@@ -324,12 +374,18 @@ class Runner:
     def step2(self, tables, reload):
         """Copy the rows of `tables`; `reload` are emptied first."""
         target = self.cfg["target"]
-        g = self.generate()
+        layout = self.layout(target)
+        if not layout:
+            raise StepFailed(f"{target} is not prepared - run step 1 first.")
+        staging = layout == "staging"
+        g = self.generate(staging)
         self.section("check")
         try:
-            db_sources = self.psql_scalar(target, "SELECT string_agg(source_db, ',' ORDER BY load_order) FROM _merge.source")
-            db_tables = self.psql_scalar(target, "SELECT string_agg(table_name, ',' ORDER BY load_order) FROM _merge.table_plan")
-            links = self.psql_scalar(target, "SELECT count(*) FROM pg_foreign_server WHERE srvname LIKE 'srv\\_%'")
+            db_sources = self.psql_scalar(target, self.m(
+                "SELECT string_agg(source_db, ',' ORDER BY load_order) FROM _merge.source", staging))
+            db_tables = self.psql_scalar(target, self.m(
+                "SELECT string_agg(table_name, ',' ORDER BY load_order) FROM _merge.table_plan", staging))
+            links = self.psql_scalar(target, self.m(LINKS_STAGING, True) if staging else LINKS_DIRECT)
         except StepFailed as e:
             raise StepFailed(f"{target} is not prepared - run step 1 first.\n{e}")
         if db_sources != ",".join(s["name"] for s in g.sources):
@@ -337,14 +393,14 @@ class Runner:
         if db_tables != ",".join(g.plan_tables()):
             raise StepFailed("The tables in the sources changed since step 1. Run step 1 again.")
         if links == "0":
-            raise StepFailed("The source links were removed (detach). Run step 1 again to copy more data.")
+            raise StepFailed("The source links / staging copies were removed (Finish). Run step 1 again to copy more data.")
         self.log("sources and tables match step 1")
         load_file = self.sql(f"load_{self.stamp}.sql")
         verify_file = self.sql(f"verify_{self.stamp}.sql")
         with open(load_file, "w", encoding="utf-8", newline="\n") as f:
-            f.write(g.load_script(set(tables), set(reload)))
+            f.write(self.m(g.load_script(set(tables), set(reload)), staging))
         with open(verify_file, "w", encoding="utf-8", newline="\n") as f:
-            f.write(g.verify(set(tables)))
+            f.write(self.m(g.verify(set(tables)), staging))
         self.section("copy data")
         self.psql_run(target, "load", file=load_file)
         self.section("sequences")
@@ -359,8 +415,9 @@ class Runner:
         self.section("metadata matrix")
         t0 = datetime.now()
         try:
-            migrated = json.loads(self.psql_scalar(target, "SELECT COALESCE(json_agg(table_name), '[]') "
-                                                           "FROM _merge.table_plan"))
+            staging = self.layout(target) == "staging"
+            migrated = json.loads(self.psql_scalar(target, self.m("SELECT COALESCE(json_agg(table_name), '[]') "
+                                                                  "FROM _merge.table_plan", staging)))
             metadata_matrix.check_table(table, protected=["MetadataHorizontal", *migrated])
             info = json.loads(self.psql_scalar(target, metadata_matrix.info_sql(table)))
             cols = metadata_matrix.check_info(table, info)
@@ -379,10 +436,15 @@ class Runner:
         self.log("\nMetadata itself is unchanged.")
 
     def detach(self):
-        self.generate()
+        target = self.cfg["target"]
+        layout = self.layout(target)
+        if not layout:
+            raise StepFailed(f"{target} is not prepared - nothing to remove.")
+        self.generate(layout == "staging")
         self.section("detach")
-        self.psql_run(self.cfg["target"], "detach", file=self.sql("06_detach_sources.sql"))
-        self.log("\nSource links removed. The _merge audit schema is kept.")
+        self.psql_run(target, "detach", file=self.sql("06_detach_sources.sql"))
+        self.log("\nStaging copies of the sources removed. The _merge_* audit tables are kept." if layout == "staging"
+                 else "\nSource links removed. The _merge audit schema is kept.")
 
     def plan(self):
         """[(table, kind, needs, sources, source_rows, loaded_rows, loaded_at)] or None if not prepared."""
@@ -390,19 +452,25 @@ class Runner:
         ok = self.psql_scalar("postgres", f"SELECT 1 FROM pg_database WHERE datname = '{target}'")
         if ok != "1":
             return None
-        if self.psql_scalar(target, "SELECT to_regclass('_merge.table_plan') IS NOT NULL") != "t":
+        layout = self.layout(target)
+        staging = layout == "staging"
+        if not layout or self.psql_scalar(target, self.m(
+                "SELECT to_regclass('_merge.table_plan') IS NOT NULL", staging)) != "t":
             return None
-        out = self.psql_scalar(target, PLAN_QUERY, extra=("-F", "\t"))
+        out = self.psql_scalar(target, self.m(PLAN_QUERY, staging), extra=("-F", "\t"))
         return [tuple(line.rstrip("\r").split("\t")) for line in out.splitlines() if line.strip()]
 
     def columns(self, table):
         """(sources in priority order, [(col, type)] of the target table,
         {source: {col: type}} for sources whose linked (foreign) table exists, linked?)."""
         target = self.cfg["target"]
-        sources = self.psql_scalar(target, "SELECT source_db FROM _merge.source ORDER BY load_order").splitlines()
-        linked = self.psql_scalar(target, "SELECT count(*) FROM pg_foreign_server WHERE srvname LIKE 'srv\\_%'") != "0"
+        staging = self.layout(target) == "staging"
+        sources = self.psql_scalar(target, self.m("SELECT source_db FROM _merge.source ORDER BY load_order",
+                                                  staging)).splitlines()
+        linked = self.psql_scalar(target, self.m(LINKS_STAGING, True) if staging else LINKS_DIRECT) != "0"
         t = table.replace("'", "''")
-        out = self.psql_scalar(target, COLUMNS_QUERY.format(t=t), extra=("-F", "\t"))
+        rel = (SOURCE_REL_STAGING if staging else SOURCE_REL_DIRECT).format(t=t)
+        out = self.psql_scalar(target, self.m(COLUMNS_QUERY.format(t=t, source_rel=rel), staging), extra=("-F", "\t"))
         cols, src_cols = [], {}
         for line in out.splitlines():
             if not line.strip():
@@ -413,6 +481,17 @@ class Runner:
             else:
                 src_cols.setdefault(src, {})[col] = typ
         return sources, cols, src_cols, linked
+
+    def read_schema(self, database):
+        """Tables and columns of `database` (schema_compare.parse)."""
+        return schema_compare.parse(self.psql_scalar(database, schema_compare.SCHEMA_SQL,
+                                                     extra=("-q", "-c", "SET search_path = ''")))
+
+    def fix_schema(self, database, path):
+        """Run a schema_compare.fix_script file in `database`: all of it or nothing."""
+        self.section(f"add missing tables / columns to {database}")
+        self.psql_run(database, "schema_fix", file=path, extra_args=["--single-transaction"])
+        self.log(f"\n{database}: missing tables / columns added (no rows copied).")
 
     def run(self, job, *args):
         try:
@@ -450,7 +529,7 @@ class App(tk.Tk):
         self.minsize(1040, 700)
         self.queue = queue.Queue()
         self.running = False
-        self.after_done = None
+        self.after_done = None  # called once the running job finished OK
         self.plan_rows = []
         self.checked = set()
         self._ensure_sources()
@@ -473,6 +552,7 @@ class App(tk.Tk):
         self.same_pw = tk.BooleanVar(value=True)
         self.drop_existing = tk.BooleanVar(value=False)
         self.clear_existing = tk.BooleanVar(value=False)
+        self.copy_mode = tk.StringVar(value="staging" if s.get("staging") else "direct")
         self._build()
         self.after(100, self._poll)
 
@@ -542,7 +622,7 @@ class App(tk.Tk):
 
     def _save_settings(self, cfg):
         keep = {k: cfg[k] for k in ("host", "port", "user", "target", "src_user", "docker",
-                                    "kerberos", "krbsrvname", "src_kerberos", "role")}
+                                    "kerberos", "krbsrvname", "src_kerberos", "role", "staging")}
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(keep, f, indent=2)
@@ -552,8 +632,11 @@ class App(tk.Tk):
     # ---------- layout ----------
     def _build(self):
         pad = {"padx": 6, "pady": 3}
-        top = ttk.Frame(self, padding=(8, 8, 8, 0))
-        top.pack(fill="x")
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=14, pady=(8, 0))
+        # Connection and source settings, used by every other tab.
+        top = ttk.Frame(nb, padding=(0, 8, 0, 6))
+        nb.add(top, text="Config settings")
 
         conn = ttk.LabelFrame(top, text="Target server", padding=8)
         conn.grid(row=0, column=0, sticky="nsew", **pad)
@@ -601,10 +684,22 @@ class App(tk.Tk):
         dbs.rowconfigure(0, weight=1)
         dbs.columnconfigure(0, weight=1)
         top.columnconfigure(2, weight=1)
+        top.rowconfigure(0, weight=1)
+
+        merge = ttk.Frame(nb, padding=(0, 0, 0, 6))
+        nb.add(merge, text="Merge databases")
 
         # Step 1
-        s1 = ttk.LabelFrame(self, text="Step 1 - Prepare target: create ALL tables (no data copied yet)", padding=8)
-        s1.pack(fill="x", padx=14, pady=(8, 0))
+        s1 = ttk.LabelFrame(merge, text="Step 1 - Prepare target: create ALL tables (no data copied yet)", padding=8)
+        s1.pack(fill="x", padx=6, pady=(8, 0))
+        mode = ttk.Frame(s1)  # packed first at the bottom so it gets its own full-width row
+        mode.pack(side="bottom", fill="x", pady=(6, 0))
+        ttk.Label(mode, text="Copy method:").pack(side="left")
+        ttk.Radiobutton(mode, text="Direct (server links: needs CREATE on the database + postgres_fdw)",
+                        variable=self.copy_mode, value="direct").pack(side="left", padx=(6, 12))
+        ttk.Radiobutton(mode, text="Through this PC (only needs CREATE on schema public; step 1 also "
+                                   "copies all source rows into staging tables, slower)",
+                        variable=self.copy_mode, value="staging").pack(side="left")
         self.step1_btn = ttk.Button(s1, text="Run step 1", command=self._step1)
         self.step1_btn.pack(side="left")
         # the two are alternatives: ticking one unticks the other
@@ -618,8 +713,8 @@ class App(tk.Tk):
                            "preflight report, IDs, indexes and keys.", foreground="#555").pack(side="left")
 
         # Step 2
-        s2 = ttk.LabelFrame(self, text="Step 2 - Copy data: tick tables, then Copy (repeat as often as you like)", padding=8)
-        s2.pack(fill="both", expand=True, padx=14, pady=(8, 0))
+        s2 = ttk.LabelFrame(merge, text="Step 2 - Copy data: tick tables, then Copy (repeat as often as you like)", padding=8)
+        s2.pack(fill="both", expand=True, padx=6, pady=(8, 0))
         bar = ttk.Frame(s2)
         bar.pack(fill="x")
         self.copy_btn = ttk.Button(bar, text="Copy data of ticked tables", command=self._step2)
@@ -628,7 +723,7 @@ class App(tk.Tk):
         ttk.Button(bar, text="Tick all", command=lambda: self._tick_all(True)).pack(side="left", padx=(8, 0))
         ttk.Button(bar, text="Tick not loaded", command=self._tick_not_loaded).pack(side="left", padx=(8, 0))
         ttk.Button(bar, text="Untick all", command=lambda: self._tick_all(False)).pack(side="left", padx=(8, 0))
-        self.detach_btn = ttk.Button(bar, text="Finish: remove source links", command=self._detach)
+        self.detach_btn = ttk.Button(bar, text="Finish: remove source links / copies", command=self._detach)
         self.matrix_btn = ttk.Button(bar, text="Build Metadata Matrix", command=self._matrix)
         self.matrix_btn.pack(side="right", padx=(0, 8))
         self.detach_btn.pack(side="right")
@@ -654,13 +749,16 @@ class App(tk.Tk):
         self.tree.bind("<Double-Button-1>", self._on_tree_double)
         self.tree.bind("<Button-3>", self._on_tree_columns)
 
+        self._build_compare(nb)
+        self.job_btns = (self.step1_btn, self.copy_btn, self.detach_btn, self.matrix_btn, self.fix_btn)
+
         status = ttk.Frame(self, padding=(14, 4, 14, 0))
         status.pack(fill="x")
         ttk.Button(status, text="Clear log", command=lambda: self.log.delete("1.0", "end")).pack(side="left")
         self.status = ttk.Label(status, text=f"psql: {find_psql()}")
         self.status.pack(side="right")
 
-        self.log = scrolledtext.ScrolledText(self, font=("Consolas", 9), wrap="none", height=12)
+        self.log = scrolledtext.ScrolledText(self, font=("Consolas", 9), wrap="none", height=10)
         self.log.pack(fill="both", expand=True, padx=14, pady=8)
 
     def _toggle_src_pw(self):
@@ -781,6 +879,205 @@ class App(tk.Tk):
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
 
+    # ---------- compare databases ----------
+    def _build_compare(self, nb):
+        tab = ttk.Frame(nb, padding=8)
+        nb.add(tab, text="Compare databases")
+        self.cmp_items, self.cmp_checked, self.cmp_dbs = [], set(), None
+        names = self._db_list()
+        self.cmp_a = tk.StringVar(value=names[0] if names else "")
+        self.cmp_b = tk.StringVar(value=names[1] if len(names) > 1 else "")
+        self.cmp_only_missing = tk.BooleanVar(value=False)
+        self.cmp_filter = tk.StringVar()
+
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x")
+        ttk.Label(bar, text="Reference (A)").pack(side="left")
+        for var, label in ((self.cmp_a, "Compare with (B, gets the missing ones)"), (self.cmp_b, None)):
+            box = ttk.Combobox(bar, textvariable=var, width=26)
+            box.configure(postcommand=lambda b=box: b.configure(values=self._db_list()))
+            box.pack(side="left", padx=(6, 6))
+            if label:
+                ttk.Button(bar, text="⇄", width=3, command=self._cmp_swap).pack(side="left", padx=(0, 6))
+                ttk.Label(bar, text=label).pack(side="left")
+        ttk.Button(bar, text="Compare", command=self._compare).pack(side="left", padx=(6, 0))
+        ttk.Label(bar, text="Both on the Target server (Config settings tab), same login. The list = Source databases.",
+                  foreground="#555").pack(side="left", padx=12)
+
+        flt = ttk.Frame(tab)
+        flt.pack(fill="x", pady=(6, 0))
+        ttk.Label(flt, text="Filter table").pack(side="left")
+        ttk.Entry(flt, textvariable=self.cmp_filter, width=26).pack(side="left", padx=(6, 12))
+        self.cmp_filter.trace_add("write", lambda *_: self._render_compare())
+        ttk.Checkbutton(flt, text="Only what B is missing", variable=self.cmp_only_missing,
+                        command=self._render_compare).pack(side="left")
+        self.fix_btn = ttk.Button(flt, text="Create ticked in B", command=self._cmp_fix)
+        self.fix_btn.pack(side="right")
+        ttk.Button(flt, text="Show SQL of ticked", command=self._cmp_show_sql).pack(side="right", padx=(0, 8))
+        ttk.Button(flt, text="Untick all", command=lambda: self._cmp_tick(False)).pack(side="right", padx=(0, 8))
+        ttk.Button(flt, text="Tick all missing", command=lambda: self._cmp_tick(True)).pack(side="right", padx=(0, 8))
+
+        self.cmp_info = ttk.Label(tab, text="Pick two databases and click Compare.", foreground="#555")
+        self.cmp_info.pack(fill="x", pady=(6, 2))
+        frame = ttk.Frame(tab)
+        frame.pack(fill="both", expand=True)
+        cols = ("tick", "kind", "table", "column", "a", "b", "note")
+        heads = ("Add", "Difference", "Table", "Column", "In A", "In B", "Note")
+        widths = (44, 150, 230, 180, 260, 260, 260)
+        self.cmp_tree = ttk.Treeview(frame, columns=cols, show="headings", height=11, selectmode="none")
+        for c, h, w in zip(cols, heads, widths):
+            self.cmp_tree.heading(c, text=h)
+            self.cmp_tree.column(c, width=w, anchor="center" if c == "tick" else "w",
+                                 stretch=c in ("table", "a", "b", "note"))
+        self.cmp_tree.tag_configure("missing", foreground="#c00000")
+        self.cmp_tree.tag_configure("differs", foreground="#b35900")
+        self.cmp_tree.tag_configure("extra", foreground="#888888")
+        ys = ttk.Scrollbar(frame, orient="vertical", command=self.cmp_tree.yview)
+        xs = ttk.Scrollbar(frame, orient="horizontal", command=self.cmp_tree.xview)
+        self.cmp_tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
+        self.cmp_tree.grid(row=0, column=0, sticky="nsew")
+        ys.grid(row=0, column=1, sticky="ns")
+        xs.grid(row=1, column=0, sticky="ew")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+        self.cmp_tree.bind("<Button-1>", self._cmp_click)
+
+    def _cmp_swap(self):
+        a, b = self.cmp_a.get(), self.cmp_b.get()
+        self.cmp_a.set(b)
+        self.cmp_b.set(a)
+
+    def _compare(self):
+        try:
+            cfg = self._config()
+        except ValueError as e:
+            messagebox.showerror(TITLE, str(e))
+            return
+        a, b = self.cmp_a.get().strip(), self.cmp_b.get().strip()
+        if not a or not b or a == b:
+            messagebox.showerror(TITLE, "Pick two different databases: A (reference) and B.")
+            return
+        self.status.configure(text=f"Comparing {a} and {b}...")
+
+        def work():
+            try:
+                runner = Runner(cfg, self.queue)
+                items = schema_compare.diff(runner.read_schema(a), runner.read_schema(b))
+                self.queue.put(("compare", (a, b, items)))
+            except (StepFailed, OSError, ValueError) as e:
+                self.queue.put(("error", f"Cannot compare {a} and {b}:\n\n{e}"))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_compare(self, a, b, items):
+        self.cmp_dbs, self.cmp_items, self.cmp_checked = (a, b), items, set()
+        self.cmp_tree.heading("a", text=f"In A: {a}")
+        self.cmp_tree.heading("b", text=f"In B: {b}")
+        self._render_compare()
+
+    def _render_compare(self):
+        tree = self.cmp_tree
+        tree.delete(*tree.get_children())
+        if not self.cmp_dbs:
+            return
+        a, b = self.cmp_dbs
+        text = self.cmp_filter.get().strip().lower()
+        shown = 0
+        for i, it in enumerate(self.cmp_items):
+            if self.cmp_only_missing.get() and not it["sql"]:
+                continue
+            label = schema_compare.table_label(it["schema"], it["table"])
+            if text and text not in label.lower():
+                continue
+            shown += 1
+            tag = "missing" if it["sql"] else "differs" if it["kind"] == "differs" else "extra"
+            tick = ("☑" if i in self.cmp_checked else "☐") if it["sql"] else ""
+            tree.insert("", "end", iid=str(i), tags=(tag,),
+                        values=(tick, schema_compare.KINDS[it["kind"]][0], label, it["column"],
+                                it["a"], it["b"], it["note"]))
+        n = {k: sum(1 for it in self.cmp_items if it["kind"] == k) for k in schema_compare.KINDS}
+        if not self.cmp_items:
+            self.cmp_info.configure(text=f"{a} and {b} have the same tables and columns.")
+            return
+        self.cmp_info.configure(
+            text=f"A = {a}, B = {b}:  {n['missing_table']} table(s) and {n['missing_column']} column(s) missing in B "
+                 f"(red, can be added),  {n['differs']} column(s) with a different type / NOT NULL (orange),  "
+                 f"{n['extra_table']} table(s) and {n['extra_column']} column(s) only in B (grey).  "
+                 f"Showing {shown}. Click a red row to tick it.")
+
+    def _cmp_click(self, event):
+        iid = self.cmp_tree.identify_row(event.y)
+        if not iid or not self.cmp_items[int(iid)]["sql"]:
+            return
+        i = int(iid)
+        self.cmp_checked ^= {i}
+        self.cmp_tree.set(iid, "tick", "☑" if i in self.cmp_checked else "☐")
+
+    def _cmp_tick(self, on):
+        """Tick / untick the missing tables and columns now shown (the filter applies)."""
+        for iid in self.cmp_tree.get_children():
+            i = int(iid)
+            if self.cmp_items[i]["sql"]:
+                (self.cmp_checked.add if on else self.cmp_checked.discard)(i)
+                self.cmp_tree.set(iid, "tick", "☑" if on else "☐")
+
+    def _cmp_ticked(self):
+        """(a, b, ticked items) or None after telling the user what is wrong."""
+        if not self.cmp_dbs:
+            messagebox.showerror(TITLE, "Click Compare first.")
+            return None
+        if self.cmp_dbs != (self.cmp_a.get().strip(), self.cmp_b.get().strip()):
+            messagebox.showerror(TITLE, "The databases were changed since the last Compare. Click Compare again.")
+            return None
+        items = [self.cmp_items[i] for i in sorted(self.cmp_checked)]
+        if not items:
+            messagebox.showerror(TITLE, "Tick at least one missing table or column (click a red row).")
+            return None
+        return (*self.cmp_dbs, items)
+
+    def _cmp_show_sql(self):
+        got = self._cmp_ticked()
+        if not got:
+            return
+        a, b, items = got
+        win = tk.Toplevel(self)
+        win.title(f"SQL to run in {b}")
+        win.geometry("900x600")
+        txt = scrolledtext.ScrolledText(win, font=("Consolas", 9), wrap="none")
+        txt.pack(fill="both", expand=True, padx=8, pady=8)
+        txt.insert("1.0", schema_compare.fix_script(items, a, b))
+
+    def _cmp_fix(self):
+        if self.running:
+            return
+        try:
+            cfg = self._config()
+        except ValueError as e:
+            messagebox.showerror(TITLE, str(e))
+            return
+        got = self._cmp_ticked()
+        if not got:
+            return
+        a, b, items = got
+        n_tab = sum(1 for it in items if it["kind"] == "missing_table")
+        if not messagebox.askyesno(
+                TITLE, f"Change database {b} so it matches {a}:\n\n"
+                       f"  create {n_tab} table(s)\n  add {len(items) - n_tab} column(s)\n\n"
+                       "Structure only, no rows are copied. It runs as one transaction: if any statement fails, "
+                       f"nothing is changed. Click 'Show SQL of ticked' to see it first.\n\nChange {b} now?",
+                icon="warning"):
+            return
+        os.makedirs(WORK_SQL, exist_ok=True)
+        path = os.path.join(WORK_SQL, f"schema_fix_{b}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql")
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(schema_compare.fix_script(items, a, b))
+        except OSError as e:
+            messagebox.showerror(TITLE, f"Cannot write {path}:\n\n{e}")
+            return
+        self.after_done = self._compare  # show what is left
+        self._launch("fix_schema", b, path, cfg=cfg)
+
     def _tick_all(self, on):
         self.checked = {r[0] for r in self.plan_rows} if on else set()
         for r in self.plan_rows:
@@ -823,6 +1120,7 @@ class App(tk.Tk):
         v["role"] = role
         v["drop_existing"] = self.drop_existing.get()
         v["clear_existing"] = self.clear_existing.get() and not v["drop_existing"]
+        v["staging"] = self.copy_mode.get() == "staging"
         v["kerberos"] = self.kerberos.get()
         v["src_kerberos"] = self.src_kerberos.get()
         if v["src_kerberos"]:
@@ -919,7 +1217,7 @@ class App(tk.Tk):
     def _launch(self, job_name, *args, cfg):
         self._save_settings(cfg)
         self.running = True
-        for b in (self.step1_btn, self.copy_btn, self.detach_btn, self.matrix_btn):
+        for b in self.job_btns:
             b.configure(state="disabled")
         self.status.configure(text="Running...")
         runner = Runner(cfg, self.queue)
@@ -1025,7 +1323,8 @@ class App(tk.Tk):
         except ValueError as e:
             messagebox.showerror(TITLE, str(e))
             return
-        if not messagebox.askyesno(TITLE, "Remove the links to the source databases?\n\n"
+        if not messagebox.askyesno(TITLE, "Remove the links to the source databases (or, for 'Through this PC', "
+                                          "the staging copies of the sources)?\n\n"
                                           "Do this when all the data you need is copied. "
                                           "To copy more afterwards you must run step 1 again."):
             return
@@ -1038,6 +1337,10 @@ class App(tk.Tk):
                 if kind == "text":
                     self.log.insert("end", data + "\n")
                     self.log.see("end")
+                elif kind == "compare":
+                    if not self.running:
+                        self.status.configure(text=f"psql: {find_psql()}")
+                    self._show_compare(*data)
                 elif kind == "columns":
                     if not self.running:
                         self.status.configure(text=f"psql: {find_psql()}")
@@ -1050,11 +1353,14 @@ class App(tk.Tk):
                     self.status.configure(text=f"Running: {data}")
                 elif kind == "done":
                     self.running = False
-                    for b in (self.step1_btn, self.copy_btn, self.detach_btn, self.matrix_btn):
+                    for b in self.job_btns:
                         b.configure(state="normal")
                     self.status.configure(text="Finished OK" if data == "ok" else "FAILED - see log")
+                    after, self.after_done = self.after_done, None
                     if data == "ok":
                         self.checked.clear()
+                        if after:
+                            after()
                     self._refresh(quiet=True)
         except queue.Empty:
             pass

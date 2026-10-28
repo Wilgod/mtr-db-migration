@@ -1,0 +1,39 @@
+-- Roll back the CWP-to-CWP_ECR schema alignment
+-- WARNING: This removes the added schema objects and any data stored in them.
+
+BEGIN;
+
+-- 1. Remove the view added by the alignment script.
+DROP VIEW IF EXISTS public."v_MigrationSummary";
+
+-- 2. Remove indexes added for permission resolution.
+DROP INDEX IF EXISTS public."IX_Files_PermResolution";
+DROP INDEX IF EXISTS public."IX_FolderInheritanceBreaks_FolderPath";
+DROP INDEX IF EXISTS public."IX_FolderInheritanceBreaks_LibSite";
+
+-- 3. Remove the added FolderInheritanceBreaks table.
+-- CASCADE is intentionally not used, so unexpected external dependencies cause
+-- the rollback to stop instead of silently removing dependent objects.
+DROP TABLE IF EXISTS public."FolderInheritanceBreaks";
+
+-- The sequence should be removed automatically when owned by the dropped column.
+-- This explicit statement also handles an earlier deployment where OWNED BY was
+-- not established.
+DROP SEQUENCE IF EXISTS public."FolderInheritanceBreaks_FolderInheritanceBreakId_seq";
+
+-- 4. Remove columns added to existing tables.
+ALTER TABLE IF EXISTS public."NewChangePath_NEW"
+    DROP COLUMN IF EXISTS "ExtendFolder";
+
+ALTER TABLE IF EXISTS public."ScanProgress"
+    DROP COLUMN IF EXISTS "LastResolvedFileId";
+
+ALTER TABLE IF EXISTS public."ScanProgress"
+    DROP COLUMN IF EXISTS "PermissionsResolved";
+
+ALTER TABLE IF EXISTS public."Files"
+    DROP COLUMN IF EXISTS "HasUniquePermissions";
+
+COMMIT;
+
+-- # END OF SCRIPT

@@ -21,15 +21,76 @@ The `Metadata` table is **vertical**: if a file has 20 metadata fields, it has 2
 | `metadata_horizontal.py` | All the logic. It can also be run from the command line (see below). |
 | `config.json` | Connection settings, the fixed column list, and the skip list. |
 | `sql/metadata_horizontal.sql` | Reference DDL for the default config. The app creates the table itself; this file is for review. |
+| `build_exe.ps1` | Builds `dist\MetadataHorizontal.exe`, a single-file version of the app. |
+| `mh_app.ps1` / `mh_app.cmd` | **PowerShell version** of the desktop app (no Python). Same buttons, same `config.json`. Double-click `mh_app.cmd` to start it. |
+| `MetadataHorizontal.psm1` | The logic for the PowerShell version. It gives the same results as `metadata_horizontal.py`. |
+| `SharePointExport.psm1` | **Export from SharePoint**: reads every file's metadata from SharePoint 2013 document libraries into one Excel/CSV sheet (see below). |
 
-## Setup and run
+## Export from SharePoint 2013 (PowerShell app)
+
+**Export from SharePoint** (first button in `mh_app.cmd`) builds the upload file straight from SharePoint:
+
+1. Enter the **Site URL**. A pasted page or library URL also works (`.../Shared Documents/Forms/AllItems.aspx`). The app walks up to the site.
+2. Choose the login: **Windows login** (the signed-in user, NTLM/Kerberos) or **DOMAIN\user + password**. With **Include subsites**, every subsite the login can open is included too.
+3. Click **Load libraries**. Every visible document library is listed with its item count. SharePoint's own libraries (Style Library, Site Assets, Site Pages, Pages, Form Templates…) start unticked.
+4. Click **Export to Excel...** and save as `.xlsx` (needs ImportExcel; max 1,048,575 files) or `.csv` (no limit). When you're connected to the database, the app then offers to **Upload** the file straight away.
+
+What's in the sheet (one row per **file**; folders are left out):
+
+| Column | Value |
+|---|---|
+| `OriginalSharePointPath`, `UniqueId`, `FileRef` | Identity columns. Upload matches files on these and does not store them. |
+| `FileLeafRef`, `FileDirRef`, `FSObjType` | Name, folder, type |
+| every library field, by **InternalName** | All visible fields that are not *Computed*, plus `Title`, `ContentType`, `Created`, `Modified`, `Author`, `Editor`, `_UIVersionString`, `CheckoutUser`. The columns are the union over all chosen libraries. |
+
+- **Values** are the text SharePoint shows: people as display names, lookups and managed metadata as labels, multi-values joined with `; `.
+- **Dates** are in this PC's local time as `yyyy-MM-dd HH:mm:ss`. SharePoint stores them in UTC.
+
+Things to know:
+- **It only reads.** It uses the REST API (`/_api`, `odata=verbose`), 500 items per request, ordered by ID, so the list view threshold doesn't block large libraries. Files the login can't see are not exported.
+- **On Upload**, every column that is not a fixed key or in `SkipColumns` becomes a `Metadata` row. If you don't want fields such as `Author`, `Title` or `ContentType` there, add them to `SkipColumns`.
+
+## PowerShell version (no Python)
+
+Copy the folder (`mh_app.cmd`, `mh_app.ps1`, `MetadataHorizontal.psm1`, `SharePointExport.psm1`, `config.json`) to the PC and double-click **`mh_app.cmd`**. It runs on the Windows PowerShell 5.1 built into Windows, or on PowerShell 7.
+
+It needs two things:
+
+- **`psql.exe`** (PostgreSQL command line tools or pgAdmin). The app looks in this order: `"PsqlPath"` in `config.json`, then `PATH`, then `psql\` or `bin\` next to the app, then `C:\Program Files\PostgreSQL\<newest>\bin`, then pgAdmin. The path it uses is shown in the log at start-up.
+- **ImportExcel**, only for `.xlsx` / `.xlsm` uploads (CSV works without it). Install it once with `Install-Module ImportExcel -Scope CurrentUser`. On a PC without internet, run `Save-Module ImportExcel -Path <folder>` on another PC and copy `<folder>\ImportExcel` to `modules\ImportExcel` next to the app. The app finds it there automatically.
+
+How it differs from the Python version:
+
+- **Scripts go to `psql` through stdin**, so no temp files are written. Uploaded rows stream straight into the database with `COPY`.
+- **Every job that changes data runs between `BEGIN` and `COMMIT`.** If psql stops early, or the app is closed mid-job, the server rolls the whole job back.
+- **Jobs run in the background**, so the window stays responsive. Log lines and progress appear as the job runs.
+- **Settings:** password, Kerberos (`PGKRBSRVNAME`), `SslMode` and Role (`PGOPTIONS=-c role=...`) are passed to psql as environment variables, never on the command line.
+- **XLSX:** the first sheet is read. Dates are formatted as `yyyy-MM-dd HH:mm:ss` and whole numbers have no `.0`, the same as the Python version.
+
+The logic can also be scripted:
+
+```powershell
+Import-Module .\MetadataHorizontal.psm1
+$cfg  = Read-MhConfig .\config.json
+$s    = Get-MhSettings $cfg
+$conn = New-MhConnection $cfg $env:PGPASSWORD
+Initialize-MhTable $conn $s                          # create / sync table
+Import-MhFile -Conn $conn -S $s -Path C:\data\arch.xlsx   # [-Sheet Sheet1]
+Convert-MhExisting $conn $s $true                    # $false = keep vertical rows
+Update-MhMatrix $conn $cfg                           # rebuild MetadataMatrix
+Get-MhDdl $s                                         # print CREATE TABLE
+```
+
+## Setup and run (Python version)
 
 ```powershell
 pip install -r requirements.txt
 python mh_app.py
 ```
 
-The password field is pre-filled from `$env:PGPASSWORD` and is **never saved**. Host, port, database and user are saved to `config.json` when you connect.
+**Without Python:** run `.\build_exe.ps1` once to build `dist\MetadataHorizontal.exe`, then copy the exe to the other computer, into a folder you can write to. It keeps `config.json` and `logs\` next to itself. On first start it writes the built-in default `config.json`; to keep your own settings (fixed columns, skip list), copy your `config.json` next to the exe too. Rebuild the exe after any code change.
+
+The password field is pre-filled from `$env:PGPASSWORD` and is **never saved**. Host, port, database, user and role are saved to `config.json` when you connect.
 
 Tick **Kerberos** to log in as the signed-in Windows (domain) user instead of a password. For this to work, the server needs a `gss` (or `sspi`) line in `pg_hba.conf`, **Host** must be the server's full DNS name (the one in its `postgres/<host>` SPN), and **User** must be the PostgreSQL role your principal maps to. `KrbSrvName` in `config.json` sets the service name (default `postgres`).
 
@@ -112,7 +173,7 @@ Tick **Kerberos** to log in as the signed-in Windows (domain) user instead of a 
 
 ## Command line
 
-Same logic as the app. The connection comes from `config.json` plus `PGPASSWORD`, or from `--url`.
+Same logic as the app. The connection comes from `config.json` (including `Kerberos` and `Role`) plus `PGPASSWORD`, or from `--url`.
 
 ```powershell
 python metadata_horizontal.py ensure                    # create / sync table

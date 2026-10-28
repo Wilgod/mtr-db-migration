@@ -1,0 +1,30 @@
+-- Schema compare: add to cwp what it is missing compared with cwp_ecr.
+-- Structure only, no rows are copied.
+
+-- column missing in B: Files.HasUniquePermissions
+ALTER TABLE "public"."Files" ADD COLUMN IF NOT EXISTS "HasUniquePermissions" boolean NOT NULL DEFAULT false;
+
+-- table missing in B: FolderInheritanceBreaks  (structure only, no rows copied)
+CREATE SEQUENCE IF NOT EXISTS public."FolderInheritanceBreaks_FolderInheritanceBreakId_seq";
+CREATE TABLE "public"."FolderInheritanceBreaks" (
+    "FolderInheritanceBreakId" integer NOT NULL DEFAULT nextval('public."FolderInheritanceBreaks_FolderInheritanceBreakId_seq"'::regclass),
+    "LibraryName" character varying(500) NOT NULL,
+    "SiteName" character varying(256) NOT NULL DEFAULT ''::character varying,
+    "FolderPath" character varying(2000) NOT NULL,
+    "PrincipalName" character varying(500) NOT NULL,
+    "PrincipalType" character varying(50) NOT NULL DEFAULT ''::character varying,
+    "RoleDefinition" character varying(100) NOT NULL,
+    "LoginName" character varying(500) NOT NULL DEFAULT ''::character varying,
+    "ScanDate" timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY ("FolderInheritanceBreakId")
+);
+
+-- column missing in B: NewChangePath_NEW.ExtendFolder
+ALTER TABLE "public"."NewChangePath_NEW" ADD COLUMN IF NOT EXISTS "ExtendFolder" text;
+
+-- column missing in B: ScanProgress.LastResolvedFileId
+ALTER TABLE "public"."ScanProgress" ADD COLUMN IF NOT EXISTS "LastResolvedFileId" integer;
+
+-- column missing in B: ScanProgress.PermissionsResolved
+ALTER TABLE "public"."ScanProgress" ADD COLUMN IF NOT EXISTS "PermissionsResolved" boolean NOT NULL DEFAULT false;
+

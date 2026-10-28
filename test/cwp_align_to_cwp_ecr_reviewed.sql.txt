@@ -1,0 +1,80 @@
+-- Align public schema in CWP with CWP_ECR
+-- Source schema snapshots: 2026-09-02
+-- Structure only; no application rows are copied.
+
+BEGIN;
+
+-- 1. Files
+ALTER TABLE public."Files"
+    ADD COLUMN IF NOT EXISTS "HasUniquePermissions" boolean NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS "IX_Files_PermResolution"
+    ON public."Files" USING btree ("SiteName", "MigrationStatus")
+    WHERE "HasUniquePermissions" = false;
+
+-- 2. FolderInheritanceBreaks
+CREATE SEQUENCE IF NOT EXISTS public."FolderInheritanceBreaks_FolderInheritanceBreakId_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+CREATE TABLE IF NOT EXISTS public."FolderInheritanceBreaks" (
+    "FolderInheritanceBreakId" integer NOT NULL
+        DEFAULT nextval('public."FolderInheritanceBreaks_FolderInheritanceBreakId_seq"'::regclass),
+    "LibraryName" character varying(500) NOT NULL,
+    "SiteName" character varying(256) NOT NULL DEFAULT ''::character varying,
+    "FolderPath" character varying(2000) NOT NULL,
+    "PrincipalName" character varying(500) NOT NULL,
+    "PrincipalType" character varying(50) NOT NULL DEFAULT ''::character varying,
+    "RoleDefinition" character varying(100) NOT NULL,
+    "LoginName" character varying(500) NOT NULL DEFAULT ''::character varying,
+    "ScanDate" timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "FolderInheritanceBreaks_pkey"
+        PRIMARY KEY ("FolderInheritanceBreakId")
+);
+
+ALTER SEQUENCE public."FolderInheritanceBreaks_FolderInheritanceBreakId_seq"
+    OWNED BY public."FolderInheritanceBreaks"."FolderInheritanceBreakId";
+
+COMMENT ON TABLE public."FolderInheritanceBreaks" IS
+    'Per-folder explicit permissions for folders that broke inheritance — used by post-scan resolution to compute effective inherited permissions for child files';
+
+CREATE INDEX IF NOT EXISTS "IX_FolderInheritanceBreaks_FolderPath"
+    ON public."FolderInheritanceBreaks" USING btree ("FolderPath");
+
+CREATE INDEX IF NOT EXISTS "IX_FolderInheritanceBreaks_LibSite"
+    ON public."FolderInheritanceBreaks" USING btree ("LibraryName", "SiteName");
+
+-- 3. NewChangePath_NEW
+ALTER TABLE public."NewChangePath_NEW"
+    ADD COLUMN IF NOT EXISTS "ExtendFolder" text;
+
+-- 4. ScanProgress
+ALTER TABLE public."ScanProgress"
+    ADD COLUMN IF NOT EXISTS "PermissionsResolved" boolean NOT NULL DEFAULT false;
+
+ALTER TABLE public."ScanProgress"
+    ADD COLUMN IF NOT EXISTS "LastResolvedFileId" integer;
+
+-- 5. Migration summary view
+CREATE OR REPLACE VIEW public."v_MigrationSummary" AS
+SELECT
+    "SiteName",
+    count(*) AS "TotalFiles",
+    count(*) FILTER (WHERE "PathStatus" = 'Violations'::text) AS "TotalViolations",
+    count(*) FILTER (WHERE "PathStatus" = 'Warning Zone'::text) AS "TotalWarnings",
+    max("TargetPath_Len") AS "MaxPathLength",
+    round(
+        count(*) FILTER (WHERE "PathStatus" = 'Violations'::text)::numeric
+        / NULLIF(count(*), 0)::numeric * 100,
+        2
+    ) || '%'::text AS "ViolationRate"
+FROM public."MigrationTasks_Parsed"
+GROUP BY "SiteName";
+
+COMMIT;
+
+-- # END OF SCRIPT
