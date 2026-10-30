@@ -1,0 +1,21 @@
+﻿#TYPE System.Security.AccessControl.DirectorySecurity
+"PSPath","PSParentPath","PSChildName","PSProvider","CentralAccessPolicyId","CentralAccessPolicyName","Path","Owner","Group","Access","Sddl","AccessToString","AuditToString","AccessRightType","AccessRuleType","AuditRuleType","AreAccessRulesProtected","AreAuditRulesProtected","AreAccessRulesCanonical","AreAuditRulesCanonical"
+"Microsoft.PowerShell.Core\FileSystem::\\hqs03nasns.corp.mtrc.com\CWPSP\s\opspj","Microsoft.PowerShell.Core\FileSystem::\\hqs03nasns.corp.mtrc.com\CWPSP\s","opspj","Microsoft.PowerShell.Core\FileSystem",,,"Microsoft.PowerShell.Core\FileSystem::\\hqs03nasns.corp.mtrc.com\CWPSP\s\opspj","MTRCORP\ssishadm_prj1","MTRCORP\Domain Users","System.Security.AccessControl.AuthorizationRuleCollection","O:S-1-5-21-396902544-93218178-860360866-321540G:DUD:PAI(A;OICIIO;FA;;;CO)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;DA)(A;OICI;FA;;;S-1-5-21-396902544-93218178-860360866-321536)(A;OICI;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-321537)(A;OICI;FA;;;S-1-5-21-396902544-93218178-860360866-321540)(A;OICI;FR;;;S-1-5-21-396902544-93218178-860360866-322948)(A;OICI;FR;;;S-1-5-21-396902544-93218178-860360866-322949)(A;OICI;FA;;;S-1-5-21-396902544-93218178-860360866-324491)(A;OICI;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-334003)(A;OICI;0x1301bf;;;S-1-5-21-396902544-93218178-860360866-334036)(A;OICI;FA;;;S-1-5-21-396902544-93218178-860360866-334047)(A;OICI;0x1301bf;;;S-1-5-21-396902544-93218178-860360866-334062)(A;OICI;FR;;;S-1-5-21-396902544-93218178-860360866-336310)(A;OICI;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-336311)(A;OICI;0x1301bf;;;S-1-5-21-396902544-93218178-860360866-336314)(A;OICI;0x1201bf;;;S-1-5-21-396902544-93218178-860360866-339695)(A;OICI;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-339715)","CREATOR OWNER Allow  FullControl
+NT AUTHORITY\SYSTEM Allow  FullControl
+BUILTIN\Administrators Allow  FullControl
+MTRCORP\Domain Admins Allow  FullControl
+MTRCORP\cwppadm Allow  FullControl
+MTRCORP\cwppsup Allow  ReadAndExecute, Synchronize
+MTRCORP\ssISHAdm_prj1 Allow  FullControl
+MTRCORP\CWP_DEV Allow  Read, Synchronize
+MTRCORP\CWP_ODC Allow  Read, Synchronize
+MTRCORP\CWP_MIG_PRD Allow  FullControl
+MTRCORP\CWP_s_opspj_All MTR Users Allow  ReadAndExecute, Synchronize
+MTRCORP\CWP_s_opspj_GM-OP - Admin Allow  Modify, Synchronize
+MTRCORP\CWP_s_opspj_K&IM Team Allow  FullControl
+MTRCORP\CWP_s_opspj_Operations Projects - Site Admin Allow  Modify, Synchronize
+MTRCORP\CWPSP_Read Allow  Read, Synchronize
+MTRCORP\CWPSP_RW Allow  ReadAndExecute, Synchronize
+MTRCORP\CWPSP_Modify Allow  Modify, Synchronize
+MTRCORP\CWP_s_opspj_Restricted_TrainServices_S30S40_Edit Allow  Write, ReadAndExecute, Synchronize
+MTRCORP\CWP_s_opspj_SrMgmt_Read Allow  ReadAndExecute, Synchronize","","System.Security.AccessControl.FileSystemRights","System.Security.AccessControl.FileSystemAccessRule","System.Security.AccessControl.FileSystemAuditRule","True","False","True","True"

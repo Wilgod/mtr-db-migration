@@ -1,0 +1,31 @@
+﻿#TYPE System.Security.AccessControl.DirectorySecurity
+"PSPath","PSParentPath","PSChildName","PSProvider","CentralAccessPolicyId","CentralAccessPolicyName","Path","Owner","Group","Access","Sddl","AccessToString","AuditToString","AccessRightType","AccessRuleType","AuditRuleType","AreAccessRulesProtected","AreAuditRulesProtected","AreAccessRulesCanonical","AreAuditRulesCanonical"
+"Microsoft.PowerShell.Core\FileSystem::\\hqs03nasns.corp.mtrc.com\CWPSP\s\opspj\admin_r\Departmental Meeting","Microsoft.PowerShell.Core\FileSystem::\\hqs03nasns.corp.mtrc.com\CWPSP\s\opspj\admin_r","Departmental Meeting","Microsoft.PowerShell.Core\FileSystem",,,"Microsoft.PowerShell.Core\FileSystem::\\hqs03nasns.corp.mtrc.com\CWPSP\s\opspj\admin_r\Departmental Meeting","MTRCORP\ssishadm_prj1","MTRCORP\Domain Users","System.Security.AccessControl.AuthorizationRuleCollection","O:S-1-5-21-396902544-93218178-860360866-321540G:DUD:AI(A;ID;FA;;;S-1-5-21-396902544-93218178-860360866-321540)(A;OICIIOID;FA;;;CO)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;DA)(A;OICIID;FA;;;S-1-5-21-396902544-93218178-860360866-97339)(A;OICIID;FA;;;S-1-5-21-396902544-93218178-860360866-321536)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-321537)(A;OICIIOID;FA;;;S-1-5-21-396902544-93218178-860360866-321540)(A;OICIID;FR;;;S-1-5-21-396902544-93218178-860360866-322948)(A;OICIID;FR;;;S-1-5-21-396902544-93218178-860360866-322949)(A;OICIID;FA;;;S-1-5-21-396902544-93218178-860360866-324491)(A;OICIID;0x1301bf;;;S-1-5-21-396902544-93218178-860360866-334036)(A;OICIID;FA;;;S-1-5-21-396902544-93218178-860360866-334047)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-334058)(A;OICIID;0x1301bf;;;S-1-5-21-396902544-93218178-860360866-334062)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-334063)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-334133)(A;OICIID;FR;;;S-1-5-21-396902544-93218178-860360866-336310)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-336311)(A;OICIID;0x1301bf;;;S-1-5-21-396902544-93218178-860360866-336314)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-339654)(A;OICIID;0x1301bf;;;S-1-5-21-396902544-93218178-860360866-339656)(A;OICIID;0x1301bf;;;S-1-5-21-396902544-93218178-860360866-339657)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-339658)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-339659)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-339668)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-339690)(A;OICIID;0x1200a9;;;S-1-5-21-396902544-93218178-860360866-339715)","MTRCORP\ssISHAdm_prj1 Allow  FullControl
+CREATOR OWNER Allow  FullControl
+NT AUTHORITY\SYSTEM Allow  FullControl
+BUILTIN\Administrators Allow  FullControl
+MTRCORP\Domain Admins Allow  FullControl
+MTRCORP\ishcen Allow  FullControl
+MTRCORP\cwppadm Allow  FullControl
+MTRCORP\cwppsup Allow  ReadAndExecute, Synchronize
+MTRCORP\ssISHAdm_prj1 Allow  FullControl
+MTRCORP\CWP_DEV Allow  Read, Synchronize
+MTRCORP\CWP_ODC Allow  Read, Synchronize
+MTRCORP\CWP_MIG_PRD Allow  FullControl
+MTRCORP\CWP_s_opspj_GM-OP - Admin Allow  Modify, Synchronize
+MTRCORP\CWP_s_opspj_K&IM Team Allow  FullControl
+MTRCORP\CWP_s_opspj_Operations Building_EditDelete Allow  ReadAndExecute, Synchronize
+MTRCORP\CWP_s_opspj_Operations Projects - Site Admin Allow  Modify, Synchronize
+MTRCORP\CWP_s_opspj_Operations Systems Allow  ReadAndExecute, Synchronize
+MTRCORP\CWP_s_opspj_Restricted_MPL_Read Allow  ReadAndExecute, Synchronize
+MTRCORP\CWPSP_Read Allow  Read, Synchronize
+MTRCORP\CWPSP_RW Allow  ReadAndExecute, Synchronize
+MTRCORP\CWPSP_Modify Allow  Modify, Synchronize
+MTRCORP\CWP_s_opspj_Restricted_OPjD_Read Allow  ReadAndExecute, Synchronize
+MTRCORP\CWP_s_opspj_Restricted_Phone_List_Edit Allow  Modify, Synchronize
+MTRCORP\CWP_s_opspj_Restricted_Project_Admin_EditDelete Allow  Modify, Synchronize
+MTRCORP\CWP_s_opspj_Restricted_Project Control_Edit Allow  ReadAndExecute, Synchronize
+MTRCORP\CWP_s_opspj_Restricted_Project Control_EditDelete Allow  ReadAndExecute, Synchronize
+MTRCORP\CWP_s_opspj_Restricted_Project_Safety_EditDelete Allow  ReadAndExecute, Synchronize
+MTRCORP\CWP_s_opspj_Restricted_Systems_Integration_and_Interface_Read Allow  ReadAndExecute, Synchronize
+MTRCORP\CWP_s_opspj_SrMgmt_Read Allow  ReadAndExecute, Synchronize","","System.Security.AccessControl.FileSystemRights","System.Security.AccessControl.FileSystemAccessRule","System.Security.AccessControl.FileSystemAuditRule","False","False","True","True"
