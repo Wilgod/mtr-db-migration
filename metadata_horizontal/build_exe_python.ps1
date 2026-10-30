@@ -1,11 +1,13 @@
 <#
 .SYNOPSIS
-  Build dist\MetadataHorizontal.exe: one file with the Metadata Horizontal app
+  Build dist\MetadataHorizontal.exe from the PYTHON app (mh_app.py) with PyInstaller
   (no Python needed on the target computer). The exe keeps config.json and
   logs\ next to itself; the first run writes the bundled default config.json.
+  The PowerShell app (with Export from SharePoint) is built by build_exe.ps1;
+  both write the same exe name, so the last build wins.
 
 .EXAMPLE
-  .\build_exe.ps1
+  .\build_exe_python.ps1
 #>
 [CmdletBinding()]
 param()

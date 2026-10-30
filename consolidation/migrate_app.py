@@ -14,6 +14,15 @@ The "Compare databases" tab lists the tables and columns that differ between
 two databases on the target server (e.g. cwp_ecr and cwp) and can add the
 missing ones to the second so it matches the first (schema_compare.py).
 
+The "ACL permissions" tab reads the NTFS permissions (Get-Acl, as permission.ps1
+does) of a folder path, its subfolders and files, marks permission.ps1's protected
+accounts and the ones missing; "Full report to Excel" writes every entry of every
+subfolder and file to .xlsx (acl_check.py). Reading changes nothing; "Apply Excel to
+folders" puts such a report (edited in Excel if needed) back: every path in it gets
+exactly the entries listed for it (Preview first shows what would change).
+"Backup (.acl.bak) to Excel" writes the same report from permission.ps1's ACL backups
+(the permissions as they were before it ran), so Apply can also restore them.
+
 The exe carries everything it needs: generate.py, sql/ and a private copy of
 psql.exe + DLLs. Only the source database names are needed: each source's
 schema is read live. Next to the exe it keeps:
@@ -27,6 +36,7 @@ pg_hba.conf, and Host must be the server's full DNS name (its SPN).
     logs\                 (one log per psql run)
 """
 import contextlib
+import csv
 import io
 import json
 import os
@@ -37,8 +47,9 @@ import sys
 import threading
 import tkinter as tk
 from datetime import datetime
-from tkinter import messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
+import acl_check
 import generate
 import schema_compare
 
@@ -63,6 +74,7 @@ LOG_DIR = os.path.join(APP_DIR, "logs")
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 TITLE = "MTR DB Migration"
+ACL_SHOW_MAX = 5000   # items kept on the ACL tab; the Excel report has all
 
 # User-made objects in an existing target (empty result = safe to build into it). Extension
 # members are skipped; postgres_fdw itself is fine (01_attach uses CREATE EXTENSION IF NOT EXISTS).
@@ -750,6 +762,7 @@ class App(tk.Tk):
         self.tree.bind("<Button-3>", self._on_tree_columns)
 
         self._build_compare(nb)
+        self._build_acl(nb)
         self.job_btns = (self.step1_btn, self.copy_btn, self.detach_btn, self.matrix_btn, self.fix_btn)
 
         status = ttk.Frame(self, padding=(14, 4, 14, 0))
@@ -1078,6 +1091,550 @@ class App(tk.Tk):
         self.after_done = self._compare  # show what is left
         self._launch("fix_schema", b, path, cfg=cfg)
 
+    # ---- ACL permissions tab (acl_check.py) ---------------------------------------------------
+
+    def _build_acl(self, nb):
+        tab = ttk.Frame(nb, padding=8)
+        nb.add(tab, text="ACL permissions")
+        self.acl_items, self.acl_errors, self.acl_proc, self.acl_report, self.acl_root_path = [], [], None, None, ""
+        self.acl_counts = {}
+        self.acl_applied = []   # results of the last "Apply Excel to folders"
+        self.acl_path = tk.StringVar()
+        self.acl_levels = tk.StringVar(value="0")
+        self.acl_files = tk.BooleanVar(value=False)
+        self.acl_own_only = tk.BooleanVar(value=True)
+        self.acl_filter = tk.StringVar()
+        self.acl_only_missing = tk.BooleanVar(value=False)
+
+        self.acl_mode = tk.StringVar(value="tree")
+        modes = ttk.Frame(tab)
+        modes.pack(fill="x")
+        ttk.Label(modes, text="Mode:").pack(side="left")
+        ttk.Radiobutton(modes, text="Folder tree (a folder and what is below it)", variable=self.acl_mode,
+                        value="tree", command=self._acl_mode_changed).pack(side="left", padx=(6, 12))
+        ttk.Radiobutton(modes, text="List of paths (only the listed folders / files)", variable=self.acl_mode,
+                        value="list", command=self._acl_mode_changed).pack(side="left")
+        self.acl_stop_btn = ttk.Button(modes, text="Stop", command=self._acl_stop, state="disabled")
+        self.acl_stop_btn.pack(side="right")
+        self.acl_full_btn = ttk.Button(modes, text="Full report to Excel...", command=self._acl_full_report)
+        self.acl_full_btn.pack(side="right", padx=(0, 6))
+        self.acl_apply_btn = ttk.Button(modes, text="Apply Excel to folders...", command=self._acl_apply)
+        self.acl_apply_btn.pack(side="right", padx=(0, 6))
+        self.acl_backup_btn = ttk.Button(modes, text="Backup (.acl.bak) to Excel...", command=self._acl_backup_report)
+        self.acl_backup_btn.pack(side="right", padx=(0, 6))
+        self.acl_read_btn = ttk.Button(modes, text="Read ACL", command=self._acl_read)
+        self.acl_read_btn.pack(side="right", padx=(0, 6))
+
+        self.acl_tree_bar = bar = ttk.Frame(tab)
+        ttk.Label(bar, text="Folder path").pack(side="left")
+        path_entry = ttk.Entry(bar, textvariable=self.acl_path, width=50)
+        path_entry.pack(side="left", padx=(6, 4), fill="x", expand=True)
+        path_entry.bind("<Return>", lambda _: self._acl_read())
+        ttk.Button(bar, text="Browse...", command=self._acl_browse).pack(side="left", padx=(0, 12))
+        ttk.Label(bar, text="Subfolder levels").pack(side="left")
+        ttk.Combobox(bar, textvariable=self.acl_levels, width=6, state="readonly",
+                     values=("0", "1", "2", "3", "5", "10", "all")).pack(side="left", padx=(6, 12))
+        ttk.Checkbutton(bar, text="Include files", variable=self.acl_files).pack(side="left")
+        ttk.Checkbutton(bar, text="Only items with their own permissions", variable=self.acl_own_only).pack(
+            side="left", padx=(8, 0))
+
+        self.acl_list_bar = lst = ttk.Frame(tab)
+        side = ttk.Frame(lst)
+        side.pack(side="right", fill="y", padx=(8, 0))
+        ttk.Button(side, text="Load from file...", command=self._acl_load_list).pack(fill="x")
+        ttk.Button(side, text="Clear", command=lambda: self.acl_list.delete("1.0", "end")).pack(fill="x", pady=(4, 0))
+        self.acl_list_count = ttk.Label(side, text="0 paths", foreground="#555")
+        self.acl_list_count.pack(fill="x", pady=(4, 0))
+        ttk.Label(lst, text="Paths, one per line (folders or files; .txt / .csv / .xlsx can be loaded):",
+                  foreground="#555").pack(anchor="w")
+        self.acl_list = scrolledtext.ScrolledText(lst, height=6, font=("Consolas", 9), wrap="none")
+        self.acl_list.pack(fill="x", expand=True)
+        self.acl_list.bind("<<Modified>>", self._acl_list_changed)
+        self._acl_mode_changed()
+
+        self.acl_flt = flt = ttk.Frame(tab)
+        flt.pack(fill="x", pady=(6, 0))
+        ttk.Label(flt, text="Filter account / path").pack(side="left")
+        ttk.Entry(flt, textvariable=self.acl_filter, width=30).pack(side="left", padx=(6, 12))
+        self.acl_filter.trace_add("write", lambda *_: self._render_acl())
+        ttk.Checkbutton(flt, text="Only items missing a protected account", variable=self.acl_only_missing,
+                        command=self._render_acl).pack(side="left")
+        ttk.Button(flt, text="Export shown to Excel...", command=self._acl_export).pack(side="right")
+        ttk.Button(flt, text="Collapse all", command=lambda: self._acl_expand(False)).pack(side="right", padx=(0, 8))
+        ttk.Button(flt, text="Expand all", command=lambda: self._acl_expand(True)).pack(side="right", padx=(0, 8))
+
+        self.acl_info = ttk.Label(tab, text="Enter a folder (e.g. \\\\hqs03nasns.corp.mtrc.com\\CWPSP\\s\\opspj4) and "
+                                            "click Read ACL, or Full report to Excel for every subfolder and file. "
+                                            "Mode 'List of paths' reads only the paths you list. Reading changes nothing; "
+                                            "'Apply Excel to folders' puts a (edited) report back on the folders.",
+                                  foreground="#555")
+        self.acl_info.pack(fill="x", pady=(6, 2))
+        frame = ttk.Frame(tab)
+        frame.pack(fill="both", expand=True)
+        cols = ("rights", "type", "inherited", "applies", "note")
+        heads = ("Rights", "Allow / Deny", "Inherited", "Applies to", "Note")
+        widths = (260, 90, 80, 230, 320)
+        self.acl_tree = ttk.Treeview(frame, columns=cols, show="tree headings", height=11, selectmode="browse")
+        self.acl_tree.heading("#0", text="Folder / File / Account")
+        self.acl_tree.column("#0", width=420, stretch=True)
+        for c, h, w in zip(cols, heads, widths):
+            self.acl_tree.heading(c, text=h)
+            self.acl_tree.column(c, width=w, anchor="w", stretch=c in ("rights", "note"))
+        self.acl_tree.tag_configure("folder", font=("Segoe UI", 9, "bold"))
+        self.acl_tree.tag_configure("missing", foreground="#c00000")
+        self.acl_tree.tag_configure("deny", foreground="#c00000")
+        self.acl_tree.tag_configure("own", foreground="#1f4e9e")
+        self.acl_tree.tag_configure("inherited", foreground="#666666")
+        ys = ttk.Scrollbar(frame, orient="vertical", command=self.acl_tree.yview)
+        xs = ttk.Scrollbar(frame, orient="horizontal", command=self.acl_tree.xview)
+        self.acl_tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
+        self.acl_tree.grid(row=0, column=0, sticky="nsew")
+        ys.grid(row=0, column=1, sticky="ns")
+        xs.grid(row=1, column=0, sticky="ew")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+    def _acl_browse(self):
+        path = filedialog.askdirectory(parent=self, title="Folder to read the ACL of",
+                                       initialdir=self.acl_path.get().strip() or None)
+        if path:
+            self.acl_path.set(os.path.normpath(path))
+
+    def _acl_mode_changed(self):
+        """Show the folder-tree controls or the path list, under the mode row."""
+        listed = self.acl_mode.get() == "list"
+        show, hide = (self.acl_list_bar, self.acl_tree_bar) if listed else (self.acl_tree_bar, self.acl_list_bar)
+        hide.pack_forget()
+        kw = {"before": self.acl_flt} if hasattr(self, "acl_flt") else {}
+        show.pack(fill="x", pady=(6, 0), **kw)
+
+    def _acl_paths(self):
+        return acl_check.clean_paths(self.acl_list.get("1.0", "end").splitlines())
+
+    def _acl_list_changed(self, _=None):
+        self.acl_list.edit_modified(False)
+        n = len(self._acl_paths())
+        self.acl_list_count.configure(text=f"{n:,} path{'s' if n != 1 else ''}")
+
+    def _acl_load_list(self):
+        path = filedialog.askopenfilename(parent=self, title="Load a list of paths",
+                                          filetypes=[("Path lists", "*.txt *.csv *.xlsx *.xlsm"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            paths = acl_check.read_path_list(path)
+        except Exception as e:
+            messagebox.showerror(TITLE, f"Cannot read {path}:\n\n{e}")
+            return
+        if not paths:
+            messagebox.showerror(TITLE, f"No paths found in {path}.\n\nPaths start with \\\\server\\share or X:\\.")
+            return
+        if self._acl_paths() and messagebox.askyesno(
+                TITLE, f"Add the {len(paths):,} path(s) to the list?\n\nYes = add, No = replace the list."):
+            paths = acl_check.clean_paths(self._acl_paths() + paths)
+        self.acl_list.delete("1.0", "end")
+        self.acl_list.insert("1.0", "\n".join(paths))
+        self._acl_list_changed()
+
+    def _acl_target(self):
+        """(root label, paths or None) for the chosen mode, or None after telling the user what is missing."""
+        if self.acl_mode.get() == "list":
+            paths = self._acl_paths()
+            if not paths:
+                messagebox.showerror(TITLE, "Enter at least one path (one per line), or Load from file.")
+                return None
+            return f"{len(paths):,} listed path(s)", paths
+        root = self.acl_path.get().strip().strip('"')
+        if not root:
+            messagebox.showerror(TITLE, "Enter a folder path.")
+            return None
+        return root, None
+
+    def _acl_read(self):
+        target = None if self.acl_proc else self._acl_target()
+        if target:
+            levels = -1 if self.acl_levels.get() == "all" else int(self.acl_levels.get())
+            self._acl_start(target[0], levels, self.acl_own_only.get(), self.acl_files.get(), None, target[1])
+
+    def _acl_full_report(self):
+        """Every entry (inherited too) of every subfolder and file - or of every listed path - to an .xlsx file."""
+        target = None if self.acl_proc else self._acl_target()
+        if not target:
+            return
+        root, paths = target
+        name = (f"list_{len(paths)}_paths" if paths
+                else "".join(c if c.isalnum() else "_" for c in root.rstrip("\\").split("\\")[-1])[:40] or "root")
+        os.makedirs(LOG_DIR, exist_ok=True)
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Save the full ACL report", defaultextension=".xlsx",
+            filetypes=[("Excel workbook", "*.xlsx")], initialdir=LOG_DIR,
+            initialfile=f"acl_full_{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+        if path:
+            self._acl_start(root, -1, False, True, path, paths)
+
+    def _acl_backup_report(self):
+        """permission.ps1's ACL backups (*.acl.bak in a folder and below) to an .xlsx report, as read before it ran."""
+        if self.acl_proc:
+            return
+        folder = filedialog.askdirectory(parent=self, title="Folder with permission.ps1's ACL backups (*.acl.bak)")
+        if not folder:
+            return
+        backups = acl_check.find_backups(folder)
+        if not backups:
+            messagebox.showerror(TITLE, f"No *.acl.bak files in {folder} or below.")
+            return
+        os.makedirs(LOG_DIR, exist_ok=True)
+        path = filedialog.asksaveasfilename(
+            parent=self, title=f"Save the report of {len(backups):,} ACL backup(s)", defaultextension=".xlsx",
+            filetypes=[("Excel workbook", "*.xlsx")], initialdir=LOG_DIR,
+            initialfile=f"acl_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+        if path:
+            # "listed path(s)": Apply puts it back on the paths as written, without asking for a root
+            self._acl_start(f"ACL backups in {os.path.normpath(folder)}: {len(backups):,} listed path(s)",
+                            -1, False, True, path, backups=backups)
+
+    def _acl_start(self, root, levels, own_only, files, report_path, paths=None, backups=None):
+        try:
+            report = acl_check.XlsxReport(report_path, root) if report_path else None
+        except OSError as e:
+            messagebox.showerror(TITLE, f"Cannot write {report_path}:\n\n{e}")
+            return
+        self.acl_items, self.acl_errors, self.acl_report, self.acl_root_path = [], [], report_path, root
+        self.acl_applied = []
+        self.acl_counts = {"folders": 0, "files": 0, "skipped": 0, "missing": 0, "hidden": 0}
+        self.acl_tree.delete(*self.acl_tree.get_children())
+        for b in (self.acl_read_btn, self.acl_full_btn, self.acl_apply_btn, self.acl_backup_btn):
+            b.configure(state="disabled")
+        self.acl_stop_btn.configure(state="normal")
+        self.acl_info.configure(text=f"Reading the ACL of {root}...")
+        self.status.configure(text="Reading ACLs...")
+        try:
+            self.acl_proc = proc = (acl_check.backup_start(backups) if backups
+                                    else acl_check.start(root, levels, own_only, files, paths))
+        except OSError as e:
+            if report:
+                report.close()
+            self._acl_end(f"Cannot start Windows PowerShell: {e}")
+            return
+
+        def work():
+            batch, other = [], []
+            try:
+                for raw in proc.stdout:
+                    item = acl_check.parse_line(raw)
+                    if item is None:
+                        if raw.strip():
+                            other.append(raw.decode("utf-8", errors="replace").strip())
+                        continue
+                    if report:
+                        report.write(item)
+                    if item["k"] != "done":
+                        batch.append(item)
+                    if len(batch) >= 200 or item["k"] == "done":
+                        self.queue.put(("acl", batch))
+                        batch = []
+            finally:
+                if report:
+                    try:
+                        report.close()
+                    except Exception as e:
+                        other.append(f"Cannot save the report {report_path}: {e}")
+            if batch:
+                self.queue.put(("acl", batch))
+            proc.wait()
+            self.queue.put(("acl_end", "\n".join(other[-5:])))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _acl_stop(self):
+        if self.acl_proc:
+            self.acl_proc.kill()
+
+    def _acl_add(self, batch):
+        n = self.acl_counts
+        for item in batch:
+            if item["k"] == "skip":
+                n["skipped"] += 1
+                continue
+            if item["k"] == "error":
+                self.acl_errors.append(item)
+                self._acl_insert(item)
+                continue
+            n["files" if item["file"] else "folders"] += 1
+            n["missing"] += bool(acl_check.missing_protected(item))
+            if len(self.acl_items) < ACL_SHOW_MAX:
+                self.acl_items.append(item)
+                self._acl_insert(item)
+            else:
+                n["hidden"] += 1
+        self.acl_info.configure(text=f"Reading... {n['folders']:,} folder(s), {n['files']:,} file(s), "
+                                     f"{n['skipped']:,} only inherit, {len(self.acl_errors):,} error(s).")
+
+    def _acl_end(self, other):
+        stopped = self.acl_proc is not None and self.acl_proc.returncode not in (0, None)
+        self.acl_proc = None
+        for b in (self.acl_read_btn, self.acl_full_btn, self.acl_apply_btn, self.acl_backup_btn):
+            b.configure(state="normal")
+        self.acl_stop_btn.configure(state="disabled")
+        if not self.running:
+            self.status.configure(text=f"psql: {find_psql()}")
+        self._render_acl()
+        if stopped:
+            self.acl_info.configure(text="Stopped (the report holds what was read so far).  "
+                                         + self.acl_info.cget("text"))
+        if "Cannot save the report" in other:
+            messagebox.showerror(TITLE, other[other.index("Cannot save the report"):])
+        elif other and not self.acl_items and not self.acl_errors:
+            messagebox.showerror(TITLE, f"Reading the ACL failed:\n\n{other}")
+        elif self.acl_report and not stopped:
+            n = self.acl_counts
+            if messagebox.askyesno(TITLE, f"Full ACL report saved:\n{self.acl_report}\n\n"
+                                          f"{n['folders']:,} folder(s), {n['files']:,} file(s), "
+                                          f"{len(self.acl_errors):,} error(s).\n\nOpen it now?"):
+                os.startfile(self.acl_report)
+
+    def _acl_matches(self, d):
+        """(show item?, entries to show) under the filter boxes."""
+        text = self.acl_filter.get().strip().lower()
+        if d["k"] == "error":
+            return not self.acl_only_missing.get() and (not text or text in d["path"].lower()), []
+        if self.acl_only_missing.get() and not acl_check.missing_protected(d):
+            return False, []
+        if not text or text in d["path"].lower():
+            return True, d["aces"]
+        aces = [a for a in d["aces"] if text in a["a"].lower()]
+        return bool(aces), aces
+
+    def _acl_insert(self, d):
+        show, aces = self._acl_matches(d)
+        if not show:
+            return
+        tree = self.acl_tree
+        kind = "File" if d.get("file") else "Folder"
+        if d["k"] == "error":
+            tree.insert("", "end", text=d["path"], tags=("folder", "missing"),
+                        values=("", "", "", "", f"{kind} ERROR: {d['error']}"))
+            return
+        missing = acl_check.missing_protected(d)
+        own = sum(1 for a in d["aces"] if not a["i"])
+        note = (f"{kind},  " + ("inheritance BROKEN" if d["broken"] else "inherits from parent")
+                + f",  owner {d['owner']},  {len(d['aces'])} entries ({own} own)"
+                + (f",  missing protected: {', '.join(missing)}" if missing else ""))
+        node = tree.insert("", "end", text=d["path"], open=len(self.acl_items) <= 20,
+                           tags=("folder", "missing") if missing else ("folder",), values=("", "", "", "", note))
+        for a in aces:
+            tags = ("deny",) if a["t"] == "Deny" else ("inherited",) if a["i"] else ("own",)
+            tree.insert(node, "end", text=a["a"], tags=tags,
+                        values=(acl_check.rights(a), a["t"], "yes" if a["i"] else "no",
+                                acl_check.applies_to(a, d.get("file")),
+                                "protected account" if acl_check.protected(a["a"]) else ""))
+
+    def _render_acl(self):
+        self.acl_tree.delete(*self.acl_tree.get_children())
+        for d in self.acl_items + self.acl_errors:
+            self._acl_insert(d)
+        for r in self.acl_applied:
+            self._acl_apply_insert(r)
+        if self.acl_proc or not self.acl_counts:
+            return
+        n = self.acl_counts
+        self.acl_info.configure(
+            text=f"{n['folders']:,} folder(s), {n['files']:,} file(s)"
+                 + (f", {n['skipped']:,} more only inherit (not listed)" if n["skipped"] else "")
+                 + f", {len(self.acl_errors):,} error(s),  {n['missing']:,} missing a protected account (red)."
+                 + (f"  Showing the first {ACL_SHOW_MAX:,}; the Excel report has all." if n["hidden"] else "")
+                 + "  Blue = own entry, grey = inherited.")
+
+    def _acl_expand(self, on):
+        for iid in self.acl_tree.get_children():
+            self.acl_tree.item(iid, open=on)
+
+    def _acl_export(self):
+        if not self.acl_items and not self.acl_errors:
+            messagebox.showerror(TITLE, "Click Read ACL first.")
+            return
+        if self.acl_counts.get("hidden") and not messagebox.askyesno(
+                TITLE, f"Only the first {ACL_SHOW_MAX:,} items are kept on screen; "
+                       f"{self.acl_counts['hidden']:,} more are not. Use 'Full report to Excel' for everything."
+                       "\n\nExport the ones on screen anyway?"):
+            return
+        os.makedirs(LOG_DIR, exist_ok=True)
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Save ACL report", defaultextension=".xlsx",
+            filetypes=[("Excel workbook", "*.xlsx")], initialdir=LOG_DIR,
+            initialfile=f"acl_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+        if not path:
+            return
+        try:
+            with acl_check.XlsxReport(path, self.acl_root_path) as report:
+                for d in self.acl_items + self.acl_errors:
+                    report.write(d)
+        except Exception as e:
+            messagebox.showerror(TITLE, f"Cannot write {path}:\n\n{e}")
+            return
+        messagebox.showinfo(TITLE, f"Saved {len(self.acl_items):,} item(s) to\n{path}")
+
+    def _acl_apply(self):
+        """Put an ACL report (.xlsx of this tab, edited in Excel if needed) back on the folders."""
+        if self.acl_proc:
+            return
+        xlsx = filedialog.askopenfilename(parent=self, title="ACL report to apply to the folders",
+                                          initialdir=LOG_DIR if os.path.isdir(LOG_DIR) else None,
+                                          filetypes=[("Excel workbook", "*.xlsx *.xlsm")])
+        if not xlsx:
+            return
+        try:
+            root, items, problems = acl_check.read_report(xlsx)
+        except Exception as e:
+            messagebox.showerror(TITLE, f"Cannot read {xlsx}:\n\n{e}")
+            return
+        if root and items and not root.endswith("listed path(s)") and not messagebox.askyesno(
+                TITLE, f"The report was taken from\n{root}\n\nApply it to the same folders?\n\n"
+                       "No = pick another root folder (e.g. the migrated copy); the report's paths are moved under it."):
+            target = filedialog.askdirectory(parent=self, title=f"Apply the report of {root} to")
+            if not target:
+                return
+            items, moved_out = acl_check.rebase(items, root, os.path.normpath(target))
+            problems += moved_out
+        if not items:
+            messagebox.showerror(TITLE, "Nothing to apply.\n\n" + "\n".join(problems[:10]))
+            return
+        skipped = f"\n\n{len(problems):,} path(s) are skipped (bad rows) - listed in red." if problems else ""
+        dry = messagebox.askyesnocancel(
+            TITLE, f"{len(items):,} path(s) in {os.path.basename(xlsx)}.{skipped}\n\n"
+                   "Every path gets exactly the entries listed for it: entries not in the report are removed, "
+                   "missing ones added, inheritance broken / restored to match 'Inheritance broken'. Rows with "
+                   "Inherited = yes come from the parent and are not written (unless inheritance is broken). "
+                   "Owner and paths not in the report are not touched.\n\n"
+                   "Yes = preview only (nothing is changed)\nNo = apply now\nCancel = do nothing")
+        if dry is None:
+            return
+        if not dry and not messagebox.askyesno(
+                TITLE, f"REPLACE the permissions of {len(items):,} path(s) now?\n\n"
+                       "The log keeps each changed path's previous permissions (SDDL).", icon="warning"):
+            return
+        os.makedirs(LOG_DIR, exist_ok=True)
+        log_path = os.path.join(LOG_DIR, f"acl_{'preview' if dry else 'apply'}_{datetime.now():%Y%m%d_%H%M%S}.csv")
+        try:
+            log = open(log_path, "w", encoding="utf-8-sig", newline="")
+        except OSError as e:
+            messagebox.showerror(TITLE, f"Cannot write {log_path}:\n\n{e}")
+            return
+        writer = csv.writer(log)
+        writer.writerow(["Path", "Status", "Changes", "Before (SDDL)"])
+        problem_items = [{"k": "error", "file": False, "path": p.split(": ", 1)[0], "error": p.split(": ", 1)[-1]}
+                         for p in problems]
+        for d in problem_items:
+            writer.writerow([d["path"], "ERROR", d["error"], ""])
+
+        self.acl_items, self.acl_errors, self.acl_counts, self.acl_report = [], [], {}, None
+        self.acl_applied = list(problem_items)
+        self.acl_apply_dry, self.acl_apply_log = dry, log_path
+        self.acl_apply_counts = {"change": 0, "same": 0, "error": len(problems), "hidden": 0}
+        self._render_acl()
+        for b in (self.acl_read_btn, self.acl_full_btn, self.acl_apply_btn, self.acl_backup_btn):
+            b.configure(state="disabled")
+        self.acl_stop_btn.configure(state="normal")
+        self.acl_info.configure(text=f"{'Previewing' if dry else 'Applying'} {os.path.basename(xlsx)}...")
+        self.status.configure(text="Applying ACLs..." if not dry else "Previewing ACL changes...")
+        try:
+            self.acl_proc = proc = acl_check.apply_start(items, dry)
+        except OSError as e:
+            log.close()
+            self.acl_proc = None
+            self._acl_apply_end(f"Cannot start Windows PowerShell: {e}")
+            return
+
+        def work():
+            batch, other = [], []
+            try:
+                for raw in proc.stdout:
+                    item = acl_check.parse_line(raw)
+                    if item is None:
+                        if raw.strip():
+                            other.append(raw.decode("utf-8", errors="replace").strip())
+                        continue
+                    if item["k"] == "item" and item["changes"]:
+                        writer.writerow([item["path"], "would change" if dry else "changed",
+                                         "\n".join(acl_check.change_text(c, item["file"]) for c in item["changes"]),
+                                         item["before"]])
+                    elif item["k"] == "error":
+                        writer.writerow([item["path"], "ERROR", item["error"], ""])
+                    if item["k"] != "done":
+                        batch.append(item)
+                    if len(batch) >= 200 or item["k"] == "done":
+                        self.queue.put(("acl_apply", batch))
+                        batch = []
+            finally:
+                log.close()
+            if batch:
+                self.queue.put(("acl_apply", batch))
+            proc.wait()
+            self.queue.put(("acl_apply_end", "\n".join(other[-5:])))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _acl_apply_add(self, batch):
+        n = self.acl_apply_counts
+        for item in batch:
+            if item["k"] == "item" and not item["changes"]:
+                n["same"] += 1
+                continue
+            n["error" if item["k"] == "error" else "change"] += 1
+            if len(self.acl_applied) < ACL_SHOW_MAX:
+                self.acl_applied.append(item)
+                self._acl_apply_insert(item)
+            else:
+                n["hidden"] += 1
+        self.acl_info.configure(text=f"{'Previewing' if self.acl_apply_dry else 'Applying'}... "
+                                     f"{n['change']:,} path(s) {'to change' if self.acl_apply_dry else 'changed'}, "
+                                     f"{n['same']:,} unchanged, {n['error']:,} error(s).")
+
+    def _acl_apply_insert(self, d):
+        """A changed / failed path of the last apply, its changes below it (blue = added, red = removed)."""
+        text = self.acl_filter.get().strip().lower()
+        changes = d.get("changes") or []
+        if text and text not in d["path"].lower() and not any(text in c.get("a", "").lower() for c in changes):
+            return
+        tree = self.acl_tree
+        if d["k"] == "error":
+            tree.insert("", "end", text=d["path"], tags=("folder", "missing"),
+                        values=("", "", "", "", f"ERROR: {d['error']}"))
+            return
+        will = "will be " if self.acl_apply_dry else ""
+        node = tree.insert("", "end", text=d["path"], open=len(self.acl_applied) <= 20, tags=("folder",),
+                           values=("", "", "", "", f"{len(changes)} change(s) - {'preview' if self.acl_apply_dry else 'done'}"))
+        for c in changes:
+            if c["op"] in ("break", "inherit"):
+                tree.insert(node, "end", text="(inheritance)", tags=("own",),
+                            values=("", "", "", "", acl_check.change_text(c, d["file"])))
+                continue
+            added = c["op"] == "+"
+            tree.insert(node, "end", text=c["a"], tags=("own",) if added else ("deny",),
+                        values=(acl_check.rights(c), c["t"], "no", acl_check.applies_to(c, d["file"]),
+                                f"{will}{'added' if added else 'removed'}"))
+
+    def _acl_apply_end(self, other):
+        stopped = self.acl_proc is not None and self.acl_proc.returncode not in (0, None)
+        self.acl_proc = None
+        for b in (self.acl_read_btn, self.acl_full_btn, self.acl_apply_btn, self.acl_backup_btn):
+            b.configure(state="normal")
+        self.acl_stop_btn.configure(state="disabled")
+        if not self.running:
+            self.status.configure(text=f"psql: {find_psql()}")
+        n, dry = self.acl_apply_counts, self.acl_apply_dry
+        done = (f"{'Preview' if dry else 'Applied'}{' - STOPPED' if stopped else ''}: "
+                f"{n['change']:,} path(s) {'would change' if dry else 'changed'}, {n['same']:,} unchanged, "
+                f"{n['error']:,} error(s)."
+                + (f"  Showing the first {ACL_SHOW_MAX:,}; the log has all." if n["hidden"] else "")
+                + ("  Nothing was changed on disk." if dry else "")
+                + "  Blue = added, red = removed.")
+        self.acl_info.configure(text=done)
+        if other and not n["change"] and not n["same"]:
+            messagebox.showerror(TITLE, f"Applying the ACL report failed:\n\n{other}")
+        elif messagebox.askyesno(TITLE, f"{done}\n\nLog:\n{self.acl_apply_log}\n\nOpen the log now?"):
+            os.startfile(self.acl_apply_log)
+
     def _tick_all(self, on):
         self.checked = {r[0] for r in self.plan_rows} if on else set()
         for r in self.plan_rows:
@@ -1341,6 +1898,14 @@ class App(tk.Tk):
                     if not self.running:
                         self.status.configure(text=f"psql: {find_psql()}")
                     self._show_compare(*data)
+                elif kind == "acl":
+                    self._acl_add(data)
+                elif kind == "acl_end":
+                    self._acl_end(data)
+                elif kind == "acl_apply":
+                    self._acl_apply_add(data)
+                elif kind == "acl_apply_end":
+                    self._acl_apply_end(data)
                 elif kind == "columns":
                     if not self.running:
                         self.status.configure(text=f"psql: {find_psql()}")

@@ -13,9 +13,12 @@
   Start: double-click mh_app.cmd, or
     powershell -NoProfile -STA -ExecutionPolicy Bypass -File mh_app.ps1
 #>
-param([string] $ConfigPath = (Join-Path $PSScriptRoot 'config.json'))
+param([string] $ConfigPath)
 
 $ErrorActionPreference = 'Stop'
+# folder of the app: this script's folder, or the exe's folder when built by build_exe.ps1
+$AppDir = if ($PSScriptRoot) { $PSScriptRoot } else { [AppDomain]::CurrentDomain.BaseDirectory.TrimEnd('\') }
+if (-not $ConfigPath) { $ConfigPath = Join-Path $AppDir 'config.json' }
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
     # WinForms dialogs need a single-threaded apartment
     Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass',
@@ -23,8 +26,25 @@ if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
     return
 }
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-$ModulePaths = @((Join-Path $PSScriptRoot 'MetadataHorizontal.psm1'), (Join-Path $PSScriptRoot 'SharePointExport.psm1'))
-Import-Module $ModulePaths -Force
+
+# build_exe.ps1 puts the two modules and the default config.json (base64) into these lines
+$EmbeddedModules = $null
+$EmbeddedConfig = $null
+if ($EmbeddedConfig -and -not (Test-Path -LiteralPath $ConfigPath)) {
+    [IO.File]::WriteAllBytes($ConfigPath, [Convert]::FromBase64String($EmbeddedConfig))   # exe, first start
+}
+# modules: the .psm1 files next to this script, or (exe) the copies built into it
+$Modules = foreach ($name in 'MetadataHorizontal', 'SharePointExport') {
+    if ($EmbeddedModules) { @{ Name = $name; Source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($EmbeddedModules[$name])) } }
+    else { @{ Name = $name; Path = Join-Path $AppDir "$name.psm1" } }
+}
+function Import-AppModules($List) {
+    foreach ($m in $List) {
+        if ($m.Path) { Import-Module $m.Path -Global -Force -DisableNameChecking }
+        else { New-Module -Name $m.Name -ScriptBlock ([scriptblock]::Create($m.Source)) | Import-Module -Global -Force -DisableNameChecking }
+    }
+}
+Import-AppModules $Modules
 
 $ViewRows = 500
 function Col([string] $Hex) { [Drawing.ColorTranslator]::FromHtml($Hex) }
@@ -95,12 +115,15 @@ function Set-Status([string] $Message, $Color = $ColorGray) {
 }
 
 $WorkerScript = {
-    param($ModulePaths, $Sync, $Title, $BodyText, $Db, $Arg)
+    param($Modules, $Sync, $Title, $BodyText, $Db, $Arg)
     $ErrorActionPreference = 'Stop'
     $log = { param($m) $Sync.Queue.Enqueue(@('log', $Title, [string]$m)) }.GetNewClosure()
     $setStatus = { param($m) $Sync.Queue.Enqueue(@('status', [string]$m)) }.GetNewClosure()
     try {
-        Import-Module $ModulePaths
+        foreach ($m in $Modules) {
+            if ($m.Path) { Import-Module $m.Path -DisableNameChecking }
+            else { New-Module -Name $m.Name -ScriptBlock ([scriptblock]::Create($m.Source)) | Import-Module -DisableNameChecking }
+        }
         $body = [scriptblock]::Create($BodyText)
         @{ Ok = $true; Result = (& $body $Db $Arg $log $setStatus) }
     } catch {
@@ -121,7 +144,7 @@ function Start-MhJob {
     $rs.Open()
     $ps = [PowerShell]::Create()
     $ps.Runspace = $rs
-    [void]$ps.AddScript($WorkerScript).AddArgument($ModulePaths).AddArgument($Sync).AddArgument($Title).AddArgument($Body.ToString()).AddArgument($script:Db).AddArgument($Arg)
+    [void]$ps.AddScript($WorkerScript).AddArgument($Modules).AddArgument($Sync).AddArgument($Title).AddArgument($Body.ToString()).AddArgument($script:Db).AddArgument($Arg)
     $script:Job = @{ PS = $ps; Runspace = $rs; Handle = $ps.BeginInvoke(); Title = $Title
                      OnDone = $OnDone; OnFail = $OnFail; Quiet = [bool]$Quiet }
     if (-not $Quiet) {
@@ -208,7 +231,7 @@ function Show-ImportExcelHelp {
     Show-Message ("Excel files need the ImportExcel PowerShell module.`n`nInstall it once (PowerShell):`n" +
                   "    Install-Module ImportExcel -Scope CurrentUser`n`n" +
                   "PC without internet: on another PC run`n    Save-Module ImportExcel -Path <folder>`n" +
-                  "and copy <folder>\ImportExcel to`n    $PSScriptRoot\modules\ImportExcel`n`n" +
+                  "and copy <folder>\ImportExcel to`n    $AppDir\modules\ImportExcel`n`n" +
                   'Or use CSV UTF-8 instead.') 'ImportExcel needed' 'Warning'
 }
 
@@ -230,7 +253,7 @@ function Start-Upload([string] $Path) {
     $s = Get-FreshSettings
     if (-not $s) { return }
     $folder = [string](Get-ConfigValue 'UnmatchedReportFolder' 'logs')
-    $reportDir = if ([IO.Path]::IsPathRooted($folder)) { $folder } else { Join-Path $PSScriptRoot $folder }
+    $reportDir = if ([IO.Path]::IsPathRooted($folder)) { $folder } else { Join-Path $AppDir $folder }
     Start-MhJob 'Upload' -Arg @{ S = $s; Path = $path; ReportDir = $reportDir } -Body {
         param($Db, $Arg, $Log, $Status)
         $progress = { param($n) & $Status ('Upload: {0:N0} rows read...' -f $n) }.GetNewClosure()
@@ -349,9 +372,9 @@ function Show-SharePointExport {
     $f.StartPosition = 'CenterParent'
     $f.BackColor = $ColorDark; $f.ForeColor = $ColorWhite; $f.Font = $form.Font
     $grid2 = New-Object Windows.Forms.TableLayoutPanel
-    $grid2.Dock = 'Fill'; $grid2.ColumnCount = 1; $grid2.RowCount = 5
+    $grid2.Dock = 'Fill'; $grid2.ColumnCount = 1; $grid2.RowCount = 6
     $grid2.Padding = New-Object Windows.Forms.Padding(8)
-    foreach ($st in @(@('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('Percent', 100), @('AutoSize', 0))) {
+    foreach ($st in @(@('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('Percent', 100), @('AutoSize', 0))) {
         [void]$grid2.RowStyles.Add((New-Object Windows.Forms.RowStyle($st[0], $st[1])))
     }
     $f.Controls.Add($grid2)
@@ -390,20 +413,41 @@ function Show-SharePointExport {
     $row.Controls.Add((New-Button 'Load libraries' $ColorBlue { Start-SpLoad } -Bold))
     $row.Controls.Add((New-Button 'Select all' (Col '#444444') { Set-SpChecked $true }))
     $row.Controls.Add((New-Button 'Select none' (Col '#444444') { Set-SpChecked $false }))
+    $row.Controls.Add((New-Button 'Expand all' (Col '#444444') { $script:SpTree.ExpandAll() }))
+    $row.Controls.Add((New-Button 'Collapse all' (Col '#444444') { $script:SpTree.CollapseAll() }))
     $script:SpCount = New-Label 'Enter the site URL, then Load libraries. System libraries (Style Library, Site Pages...) start unticked.'
     $row.Controls.Add($script:SpCount)
     $grid2.Controls.Add($row, 0, 2)
 
-    $script:SpList = New-Object Windows.Forms.CheckedListBox
-    $script:SpList.Dock = 'Fill'; $script:SpList.CheckOnClick = $true; $script:SpList.IntegralHeight = $false
-    $script:SpList.BackColor = $ColorField; $script:SpList.ForeColor = $ColorWhite; $script:SpList.BorderStyle = 'None'
-    $script:SpList.Add_ItemCheck({ $script:SpList.BeginInvoke([Action] { Update-SpCount }) | Out-Null })
-    $grid2.Controls.Add($script:SpList, 0, 3)
+    $row = New-Flow $ColorPanel
+    $row.Controls.Add((New-Label 'Search'))
+    $script:SpSearch = New-TextBox '' 300
+    $script:SpSearch.Add_TextChanged({ Update-SpTree })
+    $row.Controls.Add($script:SpSearch)
+    $row.Controls.Add((New-Label 'Sort by'))
+    $script:SpSort = New-Object Windows.Forms.ComboBox
+    $script:SpSort.DropDownStyle = 'DropDownList'; $script:SpSort.Width = 190
+    $script:SpSort.BackColor = $ColorField; $script:SpSort.ForeColor = $ColorWhite; $script:SpSort.FlatStyle = 'Flat'
+    $script:SpSort.Margin = New-Object Windows.Forms.Padding(0, 6, 4, 4)
+    [void]$script:SpSort.Items.AddRange([object[]]@('Site URL', 'Site name', 'Most items first'))
+    $script:SpSort.SelectedIndex = 0
+    $script:SpSort.Add_SelectedIndexChanged({ Update-SpTree })
+    $row.Controls.Add($script:SpSort)
+    $row.Controls.Add((New-Label 'Search matches site name, site URL, library name and folder; all words must match.'))
+    $grid2.Controls.Add($row, 0, 3)
+
+    # one group per site, its libraries below; ticks live in $script:SpChecked so they survive searching
+    $script:SpTree = New-Object Windows.Forms.TreeView
+    $script:SpTree.Dock = 'Fill'; $script:SpTree.CheckBoxes = $true; $script:SpTree.HideSelection = $false
+    $script:SpTree.BackColor = $ColorField; $script:SpTree.ForeColor = $ColorWhite; $script:SpTree.BorderStyle = 'None'
+    $script:SpTree.LineColor = $ColorGray
+    $script:SpTree.Add_AfterCheck({ param($sender, $e) Sync-SpCheck $e })
+    $grid2.Controls.Add($script:SpTree, 0, 4)
 
     $row = New-Flow $ColorDark
     $row.Controls.Add((New-Button 'Export to Excel...' $ColorOrange { Start-SpExport } -Bold -Fore ([Drawing.Color]::Black)))
     $row.Controls.Add((New-Label 'One row per file, one column per field. Progress and results appear in the main window.'))
-    $grid2.Controls.Add($row, 0, 4)
+    $grid2.Controls.Add($row, 0, 5)
 
     # closing only hides the window, so the loaded library list is kept
     $f.Add_FormClosing({ param($sender, $e) if ($e.CloseReason -eq 'UserClosing') { $e.Cancel = $true; $sender.Hide() } })
@@ -414,14 +458,93 @@ function Show-SharePointExport {
 function Update-SpCount {
     if (-not $script:SpLibs) { return }
     $n = 0; $items = 0
-    for ($i = 0; $i -lt $script:SpList.Items.Count; $i++) {
-        if ($script:SpList.GetItemChecked($i)) { $n++; $items += $script:SpLibs[$i].ItemCount }
+    for ($i = 0; $i -lt $script:SpLibs.Count; $i++) {
+        if ($script:SpChecked[$i]) { $n++; $items += $script:SpLibs[$i].ItemCount }
     }
-    $script:SpCount.Text = '{0} of {1} libraries ticked, about {2:N0} items' -f $n, $script:SpLibs.Count, $items
+    $script:SpCount.Text = '{0} of {1} libraries ticked, about {2:N0} items   |   showing {3} libraries in {4} sites' -f `
+        $n, $script:SpLibs.Count, $items, $script:SpShown.Count, $script:SpTree.Nodes.Count
 }
 
 function Set-SpChecked([bool] $On) {
-    for ($i = 0; $i -lt $script:SpList.Items.Count; $i++) { $script:SpList.SetItemChecked($i, $On) }
+    <# Tick / untick the libraries shown (all of them when nothing is searched). #>
+    if (-not $script:SpLibs) { return }
+    foreach ($i in $script:SpShown) { $script:SpChecked[$i] = $On }
+    Update-SpTree
+}
+
+function Update-SpTree {
+    <# Rebuild the tree from $script:SpLibs: search filter, one node per site, sort order from the combo. #>
+    if (-not $script:SpLibs) { return }
+    $words = @($script:SpSearch.Text.Trim() -split '\s+' | Where-Object { $_ })
+    $groups = [ordered]@{}
+    for ($i = 0; $i -lt $script:SpLibs.Count; $i++) {
+        $l = $script:SpLibs[$i]
+        $hay = "$($l.WebTitle) $($l.WebUrl) $($l.Title) $($l.Folder)"
+        $hit = $true
+        foreach ($w in $words) { if ($hay.IndexOf($w, [StringComparison]::OrdinalIgnoreCase) -lt 0) { $hit = $false; break } }
+        if (-not $hit) { continue }
+        if (-not $groups.Contains($l.WebUrl)) {
+            $groups[$l.WebUrl] = @{ Url = $l.WebUrl; Title = $l.WebTitle; Libs = New-Object 'Collections.Generic.List[int]'; Items = [long]0 }
+        }
+        $groups[$l.WebUrl].Libs.Add($i)
+        $groups[$l.WebUrl].Items += $l.ItemCount
+    }
+    $sites = @($groups.Values)
+    $libKey = { $script:SpLibs[$_].Title }
+    switch ($script:SpSort.SelectedIndex) {
+        1 { $sites = @($sites | Sort-Object { $_.Title }, { $_.Url }) }
+        2 { $sites = @($sites | Sort-Object { $_.Items } -Descending); $libKey = { -$script:SpLibs[$_].ItemCount } }
+        default { $sites = @($sites | Sort-Object { $_.Url }) }
+    }
+
+    $script:SpShown = New-Object 'Collections.Generic.List[int]'
+    $script:SpFilling = $true
+    $script:SpTree.BeginUpdate()
+    try {
+        $script:SpTree.Nodes.Clear()
+        foreach ($s in $sites) {
+            $path = ([Uri]$s.Url).AbsolutePath
+            $site = New-Object Windows.Forms.TreeNode(('{0}   {1}   ({2} libraries, {3:N0} items)' -f $s.Title, $path, $s.Libs.Count, $s.Items))
+            $site.Tag = $s.Url
+            $site.NodeFont = New-Object Drawing.Font($script:SpTree.Font, [Drawing.FontStyle]::Bold)
+            $all = $true
+            foreach ($i in @($s.Libs | Sort-Object $libKey)) {
+                $l = $script:SpLibs[$i]
+                $node = New-Object Windows.Forms.TreeNode(('{0}   ({1:N0} items)   {2}' -f $l.Title, $l.ItemCount, $l.Folder))
+                $node.Tag = [int]$i
+                $node.Checked = $script:SpChecked[$i]
+                if ($l.System) { $node.ForeColor = $ColorGray }
+                if (-not $node.Checked) { $all = $false }
+                [void]$site.Nodes.Add($node)
+                $script:SpShown.Add($i)
+            }
+            $site.Checked = $all
+            [void]$script:SpTree.Nodes.Add($site)
+        }
+        $script:SpTree.ExpandAll()
+        if ($script:SpTree.Nodes.Count) { $script:SpTree.Nodes[0].EnsureVisible() }
+    } finally {
+        $script:SpTree.EndUpdate()
+        $script:SpFilling = $false
+    }
+    Update-SpCount
+}
+
+function Sync-SpCheck($e) {
+    <# A tick changed: a site ticks / unticks all its libraries; a library updates its site's tick. #>
+    if ($script:SpFilling) { return }
+    $n = $e.Node
+    if ($n.Tag -is [int]) { $script:SpChecked[$n.Tag] = $n.Checked }
+    if ($e.Action -eq 'Unknown') { return }                       # set by the code below, not by a click
+    if ($n.Tag -is [int]) {
+        $p = $n.Parent
+        $all = $true
+        foreach ($c in $p.Nodes) { if (-not $c.Checked) { $all = $false; break } }
+        if ($p.Checked -ne $all) { $p.Checked = $all }
+    } else {
+        foreach ($c in $n.Nodes) { $c.Checked = $n.Checked }
+    }
+    Update-SpCount
 }
 
 function Start-SpLoad {
@@ -446,19 +569,14 @@ function Start-SpLoad {
         param($r)
         $script:SpSession = $r.Session
         $script:SpLibs = @($r.Libs)
-        $script:SpList.BeginUpdate()
-        $script:SpList.Items.Clear()
-        foreach ($l in $script:SpLibs) {
-            [void]$script:SpList.Items.Add(('{0} / {1}   ({2:N0} items)   {3}' -f $l.WebTitle, $l.Title, $l.ItemCount, $l.Folder), (-not $l.System))
-        }
-        $script:SpList.EndUpdate()
-        Update-SpCount
+        $script:SpChecked = [bool[]]@($script:SpLibs | ForEach-Object { -not $_.System })
+        Update-SpTree
     }
 }
 
 function Start-SpExport {
     if (-not $script:SpLibs) { Show-Message 'Load the libraries first.' 'Export from SharePoint' 'Warning'; return }
-    $sel = @(for ($i = 0; $i -lt $script:SpList.Items.Count; $i++) { if ($script:SpList.GetItemChecked($i)) { $script:SpLibs[$i] } })
+    $sel = @(for ($i = 0; $i -lt $script:SpLibs.Count; $i++) { if ($script:SpChecked[$i]) { $script:SpLibs[$i] } })
     if (-not $sel.Count) { Show-Message 'Tick at least one library.' 'Export from SharePoint' 'Warning'; return }
     $dlg = New-Object Windows.Forms.SaveFileDialog
     $dlg.Title = 'Save SharePoint metadata'

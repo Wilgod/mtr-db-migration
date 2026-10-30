@@ -21,7 +21,8 @@ The `Metadata` table is **vertical**: if a file has 20 metadata fields, it has 2
 | `metadata_horizontal.py` | All the logic. It can also be run from the command line (see below). |
 | `config.json` | Connection settings, the fixed column list, and the skip list. |
 | `sql/metadata_horizontal.sql` | Reference DDL for the default config. The app creates the table itself; this file is for review. |
-| `build_exe.ps1` | Builds `dist\MetadataHorizontal.exe`, a single-file version of the app. |
+| `build_exe.ps1` | Builds `dist\MetadataHorizontal.exe` from the **PowerShell** app with ps2exe, plus `dist\psql\`, `dist\modules\ImportExcel` and `dist\MetadataHorizontal.zip` (see below). |
+| `build_exe_python.ps1` | The old build: the same exe name, built from the Python app with PyInstaller (no SharePoint export). The last build wins. |
 | `mh_app.ps1` / `mh_app.cmd` | **PowerShell version** of the desktop app (no Python). Same buttons, same `config.json`. Double-click `mh_app.cmd` to start it. |
 | `MetadataHorizontal.psm1` | The logic for the PowerShell version. It gives the same results as `metadata_horizontal.py`. |
 | `SharePointExport.psm1` | **Export from SharePoint**: reads every file's metadata from SharePoint 2013 document libraries into one Excel/CSV sheet (see below). |
@@ -67,6 +68,15 @@ How it differs from the Python version:
 - **Settings:** password, Kerberos (`PGKRBSRVNAME`), `SslMode` and Role (`PGOPTIONS=-c role=...`) are passed to psql as environment variables, never on the command line.
 - **XLSX:** the first sheet is read. Dates are formatted as `yyyy-MM-dd HH:mm:ss` and whole numbers have no `.0`, the same as the Python version.
 
+**As one exe:** run `.\build_exe.ps1` (needs `Install-Module ps2exe -Scope CurrentUser`). It builds `dist\MetadataHorizontal.exe` with the app and both modules inside, and copies next to it:
+
+- `psql\`: `psql.exe` and its DLLs (plus the Visual C++ runtime) from the local PostgreSQL install,
+- `modules\ImportExcel`: the installed ImportExcel module.
+
+It then zips everything into `dist\MetadataHorizontal.zip`. **Unzip that on the target PC** into a folder you can write to and run `MetadataHorizontal.exe`. Neither the PostgreSQL client nor ImportExcel needs to be installed there. On first start, the exe writes its built-in default `config.json` next to itself (an existing one is kept), and it keeps `logs\` there too. To use your own settings, copy your `config.json` next to the exe. Rebuild after any code change. Options: `-NoPsql`, `-NoImportExcel`, `-PsqlDir <folder>`.
+
+> A module installed with `Install-Module` from **PowerShell 7** lands in `Documents\PowerShell\Modules`, which Windows PowerShell 5.1 (`mh_app.cmd`) does not search. If `mh_app.cmd` says ImportExcel is missing, install it from Windows PowerShell too, or use the exe, which brings its own copy.
+
 The logic can also be scripted:
 
 ```powershell
@@ -88,7 +98,7 @@ pip install -r requirements.txt
 python mh_app.py
 ```
 
-**Without Python:** run `.\build_exe.ps1` once to build `dist\MetadataHorizontal.exe`, then copy the exe to the other computer, into a folder you can write to. It keeps `config.json` and `logs\` next to itself. On first start it writes the built-in default `config.json`; to keep your own settings (fixed columns, skip list), copy your `config.json` next to the exe too. Rebuild the exe after any code change.
+**Without Python:** run `.\build_exe_python.ps1` once to build `dist\MetadataHorizontal.exe`, then copy the exe to the other computer, into a folder you can write to. It keeps `config.json` and `logs\` next to itself. On first start it writes the built-in default `config.json`; to keep your own settings (fixed columns, skip list), copy your `config.json` next to the exe too. Rebuild the exe after any code change.
 
 The password field is pre-filled from `$env:PGPASSWORD` and is **never saved**. Host, port, database, user and role are saved to `config.json` when you connect.
 

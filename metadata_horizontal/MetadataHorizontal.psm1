@@ -45,6 +45,8 @@ $script:DefaultTable = 'MetadataHorizontal'
 $script:IdentRe      = '^[A-Za-z_][A-Za-z0-9_]{0,62}\z'
 $script:Inv          = [Globalization.CultureInfo]::InvariantCulture
 $script:EndMark      = '#MH-END-OF-SCRIPT'
+# folder of the app: this file's folder, or the exe's folder when built by build_exe.ps1
+$script:AppDir       = if ($PSScriptRoot) { $PSScriptRoot } else { [AppDomain]::CurrentDomain.BaseDirectory.TrimEnd('\') }
 
 $script:MatrixDefaultTable = 'MetadataMatrix'
 $script:MatrixMaxKeys      = 1590                  # PostgreSQL allows 1600 columns per table
@@ -52,7 +54,7 @@ $script:MatrixBaseColumns  = @('FileId', 'SiteName', 'SiteId')
 $script:MatrixMarker       = 'Metadata matrix:'    # start of the table comment; only such tables are replaced
 
 # a portable ImportExcel copy next to the app (modules\ImportExcel) is found like an installed one
-$script:ModulesDir = Join-Path $PSScriptRoot 'modules'
+$script:ModulesDir = Join-Path $script:AppDir 'modules'
 if ((Test-Path -LiteralPath $script:ModulesDir) -and ($env:PSModulePath -split ';') -notcontains $script:ModulesDir) {
     $env:PSModulePath = $script:ModulesDir + ';' + $env:PSModulePath
 }
@@ -192,7 +194,7 @@ function Find-MhPsql($AppConfig) {
     }
     $cmd = Get-Command psql.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($cmd) { return $cmd.Path }
-    foreach ($p in (Join-Path $PSScriptRoot 'psql\psql.exe'), (Join-Path $PSScriptRoot 'bin\psql.exe')) {
+    foreach ($p in (Join-Path $script:AppDir 'psql\psql.exe'), (Join-Path $script:AppDir 'bin\psql.exe')) {
         if (Test-Path -LiteralPath $p) { return $p }
     }
     foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }) {
@@ -676,7 +678,7 @@ COPY mh_stage (row_no, file_id_in, unique_id, file_ref, orig_path, h, v) FROM ST
     if ($stats.duplicates) { & $Log "$(fmt $stats.duplicates) duplicate row(s) for the same file ignored (last row wins)" }
 
     if ($stats.unmatched) {
-        if (-not $ReportDir) { $ReportDir = Join-Path $PSScriptRoot 'logs' }
+        if (-not $ReportDir) { $ReportDir = Join-Path $script:AppDir 'logs' }
         [void](New-Item -ItemType Directory -Force -Path $ReportDir)
         $rpt = Join-Path $ReportDir ("unmatched_$([IO.Path]::GetFileNameWithoutExtension($Path))_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv")
         [IO.File]::WriteAllText($rpt, $report, (New-Object Text.UTF8Encoding($true)))

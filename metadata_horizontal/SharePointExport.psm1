@@ -121,25 +121,49 @@ function New-SpSession([string] $SiteUrl, [string] $UserName, [string] $Password
             $url = $up
         }
     }
-    $sp.Url = $web['Url']
+    $sp.Url = Use-SpHost $sp $web['Url']
     $sp.Title = $web['Title']
     return $sp
 }
 
 function Get-SpWebs([hashtable] $Sp, [string] $WebUrl, [switch] $Recurse, [scriptblock] $Log = { param($m) Write-Host $m }) {
-    <# The web (default: the session's site) and, with -Recurse, every subsite the login can open. #>
+    <# The web (default: the session's site) and, with -Recurse, every subsite at every level the login can open. #>
     if (-not $WebUrl) { $WebUrl = $Sp.Url }
     $out = New-Object 'Collections.Generic.List[hashtable]'
+    $seen = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     $web = Invoke-SpGet $Sp "$WebUrl/_api/web?`$select=Url,Title"
-    $out.Add(@{ Url = $web['Url']; Title = $web['Title'] })
+    $out.Add(@{ Url = (Use-SpHost $Sp $web['Url']); Title = $web['Title'] })
+    [void]$seen.Add($out[0].Url)
     if ($Recurse) {
         for ($i = 0; $i -lt $out.Count; $i++) {
-            try { $subs = (Invoke-SpGet $Sp "$($out[$i].Url)/_api/web/webs?`$select=Url,Title")['results'] }
-            catch { & $Log "Subsites of $($out[$i].Url) skipped: $($_.Exception.Message.Split("`n")[0])"; continue }
-            foreach ($s in $subs) { $out.Add(@{ Url = $s['Url']; Title = $s['Title'] }) }
+            $url = $out[$i].Url
+            # /webs needs "Enumerate subsites" on the parent; the filtered call lists the
+            # subsites the login can open even without it
+            $subs = $null
+            $errs = @()
+            foreach ($api in "webs?`$select=Url,Title", 'getsubwebsfilteredforcurrentuser(nwebtemplatefilter=-1,nconfigurationfilter=0)') {
+                try { $subs = (Invoke-SpGet $Sp "$url/_api/web/$api")['results']; break }
+                catch { $errs += $_.Exception.Message.Split("`n")[0] }
+            }
+            if ($null -eq $subs) { & $Log "Subsites of $url skipped: $($errs -join ' / ')"; continue }
+            $n = 0
+            foreach ($s in $subs) {
+                $u = Use-SpHost $Sp ([string]$s['Url'])
+                if ($u -and $seen.Add($u)) { $out.Add(@{ Url = $u; Title = $s['Title'] }); $n++ }
+            }
+            if ($n) { & $Log "$url : $n subsite(s)" }
         }
     }
     return , $out
+}
+
+function Use-SpHost([hashtable] $Sp, [string] $Url) {
+    <# SharePoint returns URLs of its default zone (alternate access mapping), which may be a host
+       this PC cannot reach or log in to: keep the scheme + host the user typed. #>
+    if ($Url -notmatch '^https?://[^/]+(.*)$') { return $Url }
+    $path = $Matches[1]
+    if ($Sp.Url -notmatch '^(https?://[^/]+)') { return $Url }
+    return $Matches[1] + $path
 }
 
 function Get-SpLibraries([hashtable] $Sp, [hashtable] $Web) {
