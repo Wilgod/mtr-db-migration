@@ -2,13 +2,17 @@ r"""
 MTR DB Migration — desktop runner for the consolidation, packaged as a single
 exe by build_exe.ps1. Two steps:
 
-  Step 1  Prepare target: create the database and ALL tables (known MTR tables
-          plus every other source table), link the sources, preflight report,
-          ID ranges, Sites, indexes/keys/triggers. No rows are copied.
-  Step 2  Copy data: pick tables and copy their rows. Repeatable; tables a
-          choice depends on are added automatically; ticking a loaded table
-          reloads it. "Build Metadata Matrix" then makes MetadataMatrix: one row
+  Before  "Load table list" reads the tables of every source; untick the ones to
+          skip (kept as skip_tables in sources.json, see generate.py).
+  Step 1  Prepare target: create the database and the tables (known MTR tables
+          plus every other source table not skipped), link the sources, preflight
+          report, ID ranges, Sites, indexes/keys/triggers. No rows are copied.
+  Step 2  Copy data: pick tables and source databases and copy their rows. Repeatable,
+          so the sources can go one at a time (plan_copy has the rules); ticking what
+          is already copied reloads it. "Build Metadata Matrix" then makes MetadataMatrix: one row
           per file, one column per distinct MetadataKey (Metadata unchanged).
+          Double-clicking a table lists its columns and indexes; tick columns there
+          to add an index on them.
 
 The "Compare databases" tab lists the tables and columns that differ between
 two databases on the target server (e.g. cwp_ecr and cwp) and can add the
@@ -20,7 +24,7 @@ accounts and the ones missing; "Full report to Excel" writes every entry of ever
 subfolder and file to .xlsx (acl_check.py). Reading changes nothing; "Apply Excel to
 folders" puts such a report (edited in Excel if needed) back: every path in it gets
 exactly the entries listed for it (Preview first shows what would change).
-"Backup (.acl.bak) to Excel" writes the same report from permission.ps1's ACL backups
+"Backup (.acl.bak) to Excel" writes the same report from the chosen ACL backups of permission.ps1
 (the permissions as they were before it ran), so Apply can also restore them.
 
 The exe carries everything it needs: generate.py, sql/ and a private copy of
@@ -46,6 +50,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import zlib
 from datetime import datetime
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
@@ -150,9 +155,18 @@ END $clear$;
 """
 PLAN_QUERY = """SELECT p.table_name, p.kind, array_to_string(p.depends_on, ', '), p.sources,
        COALESCE(p.source_rows::text, ''), COALESCE(l.row_count::text, ''),
-       COALESCE(to_char(l.loaded_at, 'YYYY-MM-DD HH24:MI'), '')
+       COALESCE(to_char(l.loaded_at, 'YYYY-MM-DD HH24:MI'), ''), {loaded_from}
 FROM _merge.table_plan p LEFT JOIN _merge.loaded_table l USING (table_name)
 ORDER BY p.load_order"""
+LOADED_FROM = ("COALESCE((SELECT string_agg(x.source_db, ', ') FROM _merge.loaded_source x "
+               "WHERE x.table_name = p.table_name), '')")
+# A target from before _merge.loaded_source: step 2 only ever copied a table from all its sources.
+LOADED_FROM_OLD = "CASE WHEN l.loaded_at IS NULL THEN '' ELSE p.sources END"
+HAS_LOADED_SOURCE = "SELECT to_regclass('_merge.loaded_source') IS NOT NULL"
+ADD_LOADED_SOURCE_SQL = generate.LOADED_SOURCE_DDL + """INSERT INTO _merge.loaded_source (table_name, source_db)
+SELECT p.table_name, x FROM _merge.loaded_table l JOIN _merge.table_plan p USING (table_name),
+     unnest(string_to_array(p.sources, ', ')) x;
+"""
 # Columns of public.<t> (source '') and of each source's linked foreign table src_<name>.<t>
 # (staging layout: its staging table, from _merge.stage).
 COLUMNS_QUERY = """SELECT src, attname, typ FROM (
@@ -167,6 +181,21 @@ COLUMNS_QUERY = """SELECT src, attname, typ FROM (
 SOURCE_REL_DIRECT = "to_regclass(format('%I.%I', s.foreign_schema, '{t}'))"
 SOURCE_REL_STAGING = ("(SELECT to_regclass(format('public.%I', g.stage_table)) FROM _merge.stage g "
                       "WHERE g.source_db = s.source_db AND g.table_name = '{t}')")
+# Indexes of public.<t>; "cols" (key columns, in order) only for a plain btree index, the kind
+# the columns window creates, so it can tell when the same index already exists.
+INDEXES_QUERY = """SELECT COALESCE(json_agg(json_build_object(
+    'name', c.relname, 'def', pg_get_indexdef(i.indexrelid),
+    'cols', CASE WHEN i.indpred IS NULL AND i.indexprs IS NULL AND am.amname = 'btree' THEN
+        (SELECT json_agg(a.attname::text ORDER BY k.ord)
+           FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(attnum, ord)
+           JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+          WHERE k.ord <= i.indnkeyatts) END) ORDER BY c.relname), '[]')
+FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_am am ON am.oid = c.relam
+WHERE i.indrelid = to_regclass(format('public.%I', '{t}'))"""
+# Tables of one source; reltuples is the server's estimate, so no table is scanned (-1 = unknown).
+SOURCE_TABLES_QUERY = """SELECT c.relname, c.reltuples::bigint FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition"""
 # How many source links (direct) / staging copies (through this PC) are still there.
 LINKS_DIRECT = "SELECT count(*) FROM pg_foreign_server WHERE srvname LIKE 'srv\\_%'"
 LINKS_STAGING = "SELECT count(*) FROM _merge.stage WHERE to_regclass(format('public.%I', stage_table)) IS NOT NULL"
@@ -180,6 +209,33 @@ def find_psql():
     if os.path.exists(bundled):
         return bundled
     return shutil.which("psql") or r"C:\Program Files\PostgreSQL\18\bin\psql.exe"
+
+
+def index_name(table, cols, taken=()):
+    """IX_<table>_<col>[_<col>...] as 04_finalize.sql names them, within PostgreSQL's 63 bytes
+    (a longer one gets a hash, or the server would cut it) and not one of the `taken` names."""
+    def cut(text, tail):
+        return text.encode("utf-8")[:63 - len(tail)].decode("utf-8", "ignore") + tail
+    base = f"IX_{table}_" + "_".join(cols)
+    if len(base.encode("utf-8")) > 63:
+        base = cut(base, f"_{zlib.crc32(base.encode('utf-8')):08x}")
+    name, n = base, 2
+    while name in taken:
+        name, n = cut(base, f"_{n}"), n + 1
+    return name
+
+
+def tick_tables(kept, table, tick, present):
+    """`kept` after (un)ticking `table`: the tables it needs come along when ticked, and
+    the tables needing it go along when unticked (generate.DEPENDS)."""
+    needs = {t: [p for p in generate.DEPENDS.get(t, []) if p in present] for t in present}
+    todo, change = [table], set()
+    while todo:
+        t = todo.pop()
+        if t not in change:
+            change.add(t)
+            todo += needs[t] if tick else [c for c in present if t in needs[c]]
+    return set(kept) | change if tick else set(kept) - change
 
 
 class StepFailed(Exception):
@@ -282,6 +338,34 @@ class Runner:
         host, port = (c["host"], c["port"]) if s["host"] in generate.LOCAL_HOSTS else (s["host"], s["port"])
         return [self.psql, "-h", host, "-p", str(port), "-U", c["src_user"], "-d", s["dbname"]], env
 
+    def source_tables(self, sources):
+        """({table: {"sources": [name], "rows": estimate, "unknown": any source without one}},
+        how many tables are never migrated (bak_*)). Fails if a source cannot be read:
+        a list missing that source's tables would look complete."""
+        tables, never = {}, set()
+        for s in sources:
+            self.out.put(("step", f"reading the tables of {s['dbname']}"))
+            cmd, env = self.source_cmd(s)
+            r = subprocess.run(cmd + ["-X", "-w", "-q", "-tA", "-F", "\t", "-v", "ON_ERROR_STOP=1",
+                                      "-c", SOURCE_TABLES_QUERY],
+                               env=env, creationflags=NO_WINDOW, stdin=subprocess.DEVNULL, capture_output=True)
+            if r.returncode != 0:
+                raise StepFailed(f"{s['dbname']}: " + r.stderr.decode("utf-8", errors="replace").strip())
+            for line in r.stdout.decode("utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                name, rows = line.rstrip("\r").split("\t")
+                if generate.EXCLUDED.match(name):
+                    never.add(name)
+                    continue
+                t = tables.setdefault(name, {"sources": [], "rows": 0, "unknown": False})
+                t["sources"].append(s["name"])
+                if int(rows) < 0:
+                    t["unknown"] = True
+                else:
+                    t["rows"] += int(rows)
+        return tables, len(never)
+
     def layout(self, target):
         """'direct' (postgres_fdw + _merge schema), 'staging' (through this PC) or '' (not built)."""
         return self.psql_scalar(target, LAYOUT_QUERY)
@@ -381,10 +465,11 @@ class Runner:
         self.psql_run(target, "prepare", file=self.sql("03_prepare.sql"))
         self.section("finalize")
         self.psql_run(target, "finalize", file=self.sql("04_finalize.sql"))
-        self.log("\nStep 1 done: every table exists (no rows yet). Pick tables in step 2 to copy their data.")
+        self.log("\nStep 1 done: the tables exist (no rows yet). Pick tables in step 2 to copy their data.")
 
-    def step2(self, tables, reload):
-        """Copy the rows of `tables`; `reload` are emptied first."""
+    def _checked_target(self):
+        """(Gen, staging?) for a target step 1 prepared, with its sources still reachable and
+        still matching what step 1 saw; fails with what to do otherwise."""
         target = self.cfg["target"]
         layout = self.layout(target)
         if not layout:
@@ -407,19 +492,74 @@ class Runner:
         if links == "0":
             raise StepFailed("The source links / staging copies were removed (Finish). Run step 1 again to copy more data.")
         self.log("sources and tables match step 1")
-        load_file = self.sql(f"load_{self.stamp}.sql")
+        return g, staging
+
+    def _sequences_and_verify(self, target, g, staging, holds):
+        """`holds`: {table: sources} to reconcile against the sources."""
         verify_file = self.sql(f"verify_{self.stamp}.sql")
-        with open(load_file, "w", encoding="utf-8", newline="\n") as f:
-            f.write(self.m(g.load_script(set(tables), set(reload)), staging))
         with open(verify_file, "w", encoding="utf-8", newline="\n") as f:
-            f.write(self.m(g.verify(set(tables)), staging))
-        self.section("copy data")
-        self.psql_run(target, "load", file=load_file)
+            f.write(self.m(g.verify(holds), staging))
         self.section("sequences")
         self.psql_run(target, "sequences", file=self.sql("04b_sequences.sql"))
         self.section("verify")
         self.psql_run(target, "verify", file=verify_file)
-        self.log(f"\nStep 2 done: {len(tables)} table(s) copied and verified.")
+
+    def recheck(self):
+        """The end of step 2 again, for all that is copied: reset the sequences, reconcile every
+        copied table against its sources. For when a copy committed but this part did not finish.
+        No rows are copied or changed."""
+        target = self.cfg["target"]
+        g, staging = self._checked_target()
+        holds = {r[0]: [x for x in r[7].split(", ") if x] for r in self.plan()[1]}
+        holds = {t: v for t, v in holds.items() if v}
+        if not holds:
+            raise StepFailed("Nothing has been copied yet, so there is nothing to re-check.")
+        self._sequences_and_verify(target, g, staging, holds)
+        self.log(f"\nRe-check done: sequences reset, {len(holds)} table(s) match their sources.")
+
+    def step2(self, copies, reload, holds):
+        """Copy the rows in `copies` {table: sources}; `reload` are emptied first. `holds` is
+        {table: sources} once done, what verify checks (plan_copy returns all three)."""
+        target = self.cfg["target"]
+        g, staging = self._checked_target()
+        if self.psql_scalar(target, self.m(HAS_LOADED_SOURCE, staging)) != "t":
+            path = self.sql(f"add_loaded_source_{self.stamp}.sql")
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(self.m(ADD_LOADED_SOURCE_SQL, staging))
+            self.psql_run(target, "add_loaded_source", file=path, extra_args=["-q", "--single-transaction"])
+        batches = g.load_batches(copies, set(reload))
+        done = []
+        for i, (source, sql) in enumerate(batches, 1):
+            load_file = self.sql(f"load_{self.stamp}_{i}_{source}.sql")
+            with open(load_file, "w", encoding="utf-8", newline="\n") as f:
+                f.write(self.m(sql, staging))
+            self.section(f"copy data {i}/{len(batches)}: {source}")
+            try:
+                self.psql_run(target, f"load_{i}_{source}", file=load_file)
+            except StepFailed as e:
+                self._after_failed_copy(target, done)
+                raise StepFailed(f"{e}\n\nCopying from {source} failed; nothing from {source} was kept. "
+                                 + (f"Committed and kept: {', '.join(done)}. " if done else "")
+                                 + "Fix the problem, then click Tick not loaded and Copy to carry on from there.")
+            done.append(source)
+            self.log(f"{source}: committed ({i}/{len(batches)})")
+        try:
+            self._sequences_and_verify(target, g, staging, holds)
+        except StepFailed as e:
+            raise StepFailed(f"{e}\n\nThe rows are copied and committed; this last part did not finish. "
+                             "Fix the problem, then click Re-check. Do not copy these tables again.")
+        self.log(f"\nStep 2 done: {len(copies)} table(s) copied and verified.")
+
+    def _after_failed_copy(self, target, done):
+        """The sources already committed stay, so their sequences must still be moved past
+        their new IDs. A failure here (the server may be gone) must not hide the first error."""
+        if not done:
+            return
+        self.section("sequences (for the databases already committed)")
+        try:
+            self.psql_run(target, "sequences", file=self.sql("04b_sequences.sql"))
+        except StepFailed as e:
+            self.log(f"Could not reset the sequences: {e}. The next successful copy resets them.")
 
     def matrix(self):
         """Rebuild MetadataMatrix from Metadata (see metadata_matrix.py). Metadata is only read."""
@@ -459,7 +599,8 @@ class Runner:
                  else "\nSource links removed. The _merge audit schema is kept.")
 
     def plan(self):
-        """[(table, kind, needs, sources, source_rows, loaded_rows, loaded_at)] or None if not prepared."""
+        """([source names in priority order], [(table, kind, needs, sources, source_rows, loaded_rows,
+        loaded_at, loaded_from)]) or None if not prepared."""
         target = self.cfg["target"]
         ok = self.psql_scalar("postgres", f"SELECT 1 FROM pg_database WHERE datname = '{target}'")
         if ok != "1":
@@ -469,8 +610,12 @@ class Runner:
         if not layout or self.psql_scalar(target, self.m(
                 "SELECT to_regclass('_merge.table_plan') IS NOT NULL", staging)) != "t":
             return None
-        out = self.psql_scalar(target, self.m(PLAN_QUERY, staging), extra=("-F", "\t"))
-        return [tuple(line.rstrip("\r").split("\t")) for line in out.splitlines() if line.strip()]
+        current = self.psql_scalar(target, self.m(HAS_LOADED_SOURCE, staging)) == "t"
+        out = self.psql_scalar(target, self.m(PLAN_QUERY.format(loaded_from=LOADED_FROM if current else LOADED_FROM_OLD),
+                                              staging), extra=("-F", "\t"))
+        sources = self.psql_scalar(target, self.m("SELECT source_db FROM _merge.source ORDER BY load_order",
+                                                  staging)).splitlines()
+        return sources, [tuple(line.rstrip("\r").split("\t")) for line in out.splitlines() if line.strip()]
 
     def columns(self, table):
         """(sources in priority order, [(col, type)] of the target table,
@@ -493,6 +638,24 @@ class Runner:
             else:
                 src_cols.setdefault(src, {})[col] = typ
         return sources, cols, src_cols, linked
+
+    def indexes(self, table):
+        """[{name, def, cols}] of public.<table>, see INDEXES_QUERY."""
+        t = table.replace("'", "''")
+        return json.loads(self.psql_scalar(self.cfg["target"], INDEXES_QUERY.format(t=t)))
+
+    def create_index(self, table, cols, name):
+        """CREATE INDEX on public.<table>; the file stays in migration_work like all SQL run."""
+        target = self.cfg["target"]
+        self.section(f"create index {name}")
+        collist = ", ".join(generate.q(c) for c in cols)
+        os.makedirs(WORK_SQL, exist_ok=True)
+        path = self.sql(f"index_{self.stamp}.sql")
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\\timing on\nSET maintenance_work_mem = '1GB';\n"
+                    f"CREATE INDEX {generate.q(name)} ON public.{generate.q(table)} ({collist});\n")
+        self.psql_run(target, "index", file=path)
+        self.log(f"\nIndex {name} created on {table} ({', '.join(cols)}).")
 
     def read_schema(self, database):
         """Tables and columns of `database` (schema_compare.parse)."""
@@ -517,20 +680,67 @@ class Runner:
             self.out.put(("done", "failed"))
 
 
-def closure(checked, plan):
-    """Tables to load for `checked`: add parents not loaded yet; reloading a table
-    also reloads its loaded children (TRUNCATE ... CASCADE empties them)."""
-    deps = {t: [p for p in p_needs.split(", ") if p] for t, _, p_needs, *_ in plan}
-    loaded = {t for t, *_, rows, at in plan if at}
-    children = {t: [c for c, ps in deps.items() if t in ps] for t in deps}
-    need = set(checked)
-    while True:
-        add = {p for t in need for p in deps.get(t, []) if p not in need and p not in loaded}
-        add |= {c for t in need if t in loaded for c in children[t] if c in loaded and c not in need}
-        if not add:
-            break
-        need |= add
-    return need, need & loaded
+def plan_copy(checked, chosen, plan):
+    """What step 2 does for the ticked tables `checked` and source databases `chosen`:
+    - a table gets the chosen sources it has not been copied from yet;
+    - with none left it is reloaded: emptied (from every source), then copied from the chosen ones;
+    - a row needs its parent from the same source, so parents not copied yet are added;
+    - reloading a table also reloads its copied children (TRUNCATE ... CASCADE empties them);
+    - a table with merge rules takes its sources in list order, or the wrong source would win a
+      conflict. Copied-as-is tables have no conflicts, so any order will do.
+    Returns {"copies": {table: [source]}, "reload": set, "added": set of tables nobody ticked,
+    "holds": {table: [source]} after the copy, "lost": {table: [source]} no longer held,
+    "errors": [text], "not_there": ticked tables that no chosen source has}."""
+    def names(text):
+        return [x for x in text.split(", ") if x]
+    has = {r[0]: names(r[3]) for r in plan}
+    needs = {r[0]: names(r[2]) for r in plan}
+    loaded = {r[0]: set(names(r[7])) for r in plan}
+    rules = {r[0] for r in plan if r[1] != "copied as-is"}
+    copies, reload, not_there = {}, set(), set()
+    for t in checked:
+        wanted = set(has[t]) & set(chosen)
+        if not wanted:
+            not_there.add(t)
+            continue
+        new = wanted - loaded[t]
+        copies[t] = new or wanted
+        if not new:
+            reload.add(t)
+    changed = True
+    while changed:
+        changed = False
+        for t in list(copies):
+            for p in needs[t]:
+                missing = {s for s in copies[t] & set(has[p]) if p in reload or s not in loaded[p]} - copies.get(p, set())
+                if missing:
+                    copies.setdefault(p, set()).update(missing)
+                    changed = True
+        for t in list(reload):
+            for c in [c for c in has if t in needs[c] and loaded[c]]:
+                again = (loaded[c] & set(chosen)) - copies.get(c, set())
+                if c not in reload or again:
+                    reload.add(c)
+                    if again:
+                        copies.setdefault(c, set()).update(again)
+                    changed = True
+    order = [r[0] for r in plan]
+    holds = {t: (set() if t in reload else loaded[t]) | copies.get(t, set()) for t in order if t in copies or t in reload}
+    errors = []
+    for t in order:
+        if t in rules and t in copies:
+            last = max(has[t].index(s) for s in copies[t])
+            before = [s for s in has[t][:last] if s not in holds[t]]
+            if before:
+                errors.append(f"{t}: copy {', '.join(before)} before {has[t][last]}")
+
+    def in_order(t, sources):
+        return [s for s in has[t] if s in sources]
+    return {"copies": {t: in_order(t, copies[t]) for t in order if t in copies}, "reload": reload,
+            "added": set(copies) - set(checked),
+            "holds": {t: in_order(t, holds[t]) for t in holds if holds[t]},
+            "lost": {t: in_order(t, loaded[t] - holds[t]) for t in order if t in reload and loaded[t] - holds[t]},
+            "errors": errors, "not_there": not_there}
 
 
 class App(tk.Tk):
@@ -544,7 +754,11 @@ class App(tk.Tk):
         self.after_done = None  # called once the running job finished OK
         self.plan_rows = []
         self.checked = set()
+        self.plan_sources = []  # databases of the target's plan, in priority order
+        self.db_off = set()  # the ones unticked for step 2
         self._ensure_sources()
+        self.skip_tables = set(self._read_sources().get("skip_tables") or [])  # as of the last step 1
+        self.picker = None  # the open "Load table list" window
         s = self._load_settings()
 
         self.vars = {
@@ -622,6 +836,8 @@ class App(tk.Tk):
                             "the first source wins when two hold the same record). host/port are as seen",
                             "from the target server; 'localhost' = the same server as the target."],
                "target_dbname": target, "sources": entries}
+        if self.skip_tables:
+            cfg["skip_tables"] = sorted(self.skip_tables)
         with open(SOURCES_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
 
@@ -702,8 +918,15 @@ class App(tk.Tk):
         nb.add(merge, text="Merge databases")
 
         # Step 1
-        s1 = ttk.LabelFrame(merge, text="Step 1 - Prepare target: create ALL tables (no data copied yet)", padding=8)
+        s1 = ttk.LabelFrame(merge, text="Step 1 - Prepare target: create the tables (no data copied yet)", padding=8)
         s1.pack(fill="x", padx=6, pady=(8, 0))
+        choose = ttk.Frame(s1)
+        choose.pack(side="top", fill="x", pady=(0, 6))
+        self.tables_btn = ttk.Button(choose, text="Load table list", command=self._load_tables)
+        self.tables_btn.pack(side="left")
+        self.skip_info = ttk.Label(choose)
+        self.skip_info.pack(side="left", padx=(10, 0))
+        self._show_skip()
         mode = ttk.Frame(s1)  # packed first at the bottom so it gets its own full-width row
         mode.pack(side="bottom", fill="x", pady=(6, 0))
         ttk.Label(mode, text="Copy method:").pack(side="left")
@@ -721,16 +944,18 @@ class App(tk.Tk):
         ttk.Checkbutton(s1, text="Clear existing target (drop all tables, keep database)", variable=self.clear_existing,
                         command=lambda: self.clear_existing.get() and self.drop_existing.set(False)
                         ).pack(side="left", padx=(0, 12))
-        ttk.Label(s1, text="Creates the database, every table from every source, the source links, "
+        ttk.Label(s1, text="Creates the database, the tables you did not skip, the source links, "
                            "preflight report, IDs, indexes and keys.", foreground="#555").pack(side="left")
 
         # Step 2
-        s2 = ttk.LabelFrame(merge, text="Step 2 - Copy data: tick tables, then Copy (repeat as often as you like)", padding=8)
+        s2 = ttk.LabelFrame(merge, text="Step 2 - Copy data: tick databases and tables, then Copy (repeat as often as you like)", padding=8)
         s2.pack(fill="both", expand=True, padx=6, pady=(8, 0))
         bar = ttk.Frame(s2)
         bar.pack(fill="x")
         self.copy_btn = ttk.Button(bar, text="Copy data of ticked tables", command=self._step2)
         self.copy_btn.pack(side="left")
+        self.recheck_btn = ttk.Button(bar, text="Re-check", command=self._recheck)
+        self.recheck_btn.pack(side="left", padx=(8, 0))
         ttk.Button(bar, text="Refresh list", command=self._refresh).pack(side="left", padx=(8, 0))
         ttk.Button(bar, text="Tick all", command=lambda: self._tick_all(True)).pack(side="left", padx=(8, 0))
         ttk.Button(bar, text="Tick not loaded", command=self._tick_not_loaded).pack(side="left", padx=(8, 0))
@@ -742,17 +967,27 @@ class App(tk.Tk):
         self.plan_info = ttk.Label(s2, text="Run step 1, or click Refresh list if it is already done.", foreground="#555")
         self.plan_info.pack(fill="x", pady=(6, 2))
 
-        cols = ("tick", "table", "kind", "needs", "sources", "source_rows", "loaded_rows", "loaded_at")
-        heads = ("Copy", "Table", "Type", "Needs", "Sources", "Rows in sources", "Rows loaded", "Loaded at")
-        widths = (44, 250, 100, 150, 260, 110, 100, 120)
+        cols = ("tick", "table", "kind", "needs", "sources", "source_rows", "loaded_rows", "loaded_from", "loaded_at")
+        heads = ("Copy", "Table", "Type", "Needs", "Sources", "Rows in sources", "Rows loaded", "Copied from", "Loaded at")
+        widths = (44, 220, 90, 130, 200, 100, 90, 170, 120)
         frame = ttk.Frame(s2)
         frame.pack(fill="both", expand=True)
+        dbs = ttk.Frame(frame)
+        dbs.pack(side="left", fill="y", padx=(0, 8))
+        self.db_tree = ttk.Treeview(dbs, columns=("tick", "db", "done"), show="headings", height=11, selectmode="none")
+        for c, h, w, a in (("tick", "Copy", 44, "center"), ("db", "Database (priority order)", 170, "w"),
+                           ("done", "Tables copied", 90, "center")):
+            self.db_tree.heading(c, text=h)
+            self.db_tree.column(c, width=w, anchor=a, stretch=False)
+        self.db_tree.pack(side="left", fill="y")
+        self.db_tree.bind("<Button-1>", self._on_db_click)
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", height=11, selectmode="none")
         for c, h, w in zip(cols, heads, widths):
             self.tree.heading(c, text=h)
             anchor = "e" if c in ("source_rows", "loaded_rows") else ("center" if c == "tick" else "w")
             self.tree.column(c, width=w, anchor=anchor, stretch=c in ("table", "sources"))
         self.tree.tag_configure("loaded", foreground="#1a7f37")
+        self.tree.tag_configure("partial", foreground="#b35900")
         sb = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -763,7 +998,7 @@ class App(tk.Tk):
 
         self._build_compare(nb)
         self._build_acl(nb)
-        self.job_btns = (self.step1_btn, self.copy_btn, self.detach_btn, self.matrix_btn, self.fix_btn)
+        self.job_btns = (self.step1_btn, self.copy_btn, self.recheck_btn, self.detach_btn, self.matrix_btn, self.fix_btn)
 
         status = ttk.Frame(self, padding=(14, 4, 14, 0))
         status.pack(fill="x")
@@ -780,30 +1015,159 @@ class App(tk.Tk):
         self.entries["krbsrvname"].configure(state="normal" if krb else "disabled")
         self.src_pw_entry.configure(state="disabled" if self.same_pw.get() or self.src_kerberos.get() else "normal")
 
+    # ---------- choose tables before step 1 ----------
+    def _show_skip(self):
+        names = sorted(self.skip_tables)
+        if not names:
+            text = "Tables: all are migrated. Click Load table list to choose which to skip."
+        else:
+            text = (f"Tables: skipping {len(names)}: " + ", ".join(names[:6]) + (", ..." if len(names) > 6 else "")
+                    + "  (takes effect when step 1 runs)")
+        self.skip_info.configure(text=text)
+
+    def _load_tables(self):
+        try:
+            cfg = self._config()
+        except ValueError as e:
+            messagebox.showerror(TITLE, str(e))
+            return
+        dbnames = self._db_list()
+        if not dbnames:
+            messagebox.showerror(TITLE, "Enter at least one source database.")
+            return
+        entries, _ = self._source_entries(dbnames)
+        self.status.configure(text="Loading the table list...")
+        self.tables_btn.configure(state="disabled")
+
+        def work():
+            try:
+                self.queue.put(("table_list", Runner(cfg, self.queue).source_tables(entries)))
+            except (StepFailed, OSError) as e:
+                self.queue.put(("table_list_failed", f"Cannot load the table list:\n\n{e}"))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_table_picker(self, tables, never):
+        """Window: every table of every source; unticked ones are skipped by step 1."""
+        if self.picker is not None and self.picker.winfo_exists():
+            self.picker.destroy()
+        win = self.picker = tk.Toplevel(self)
+        win.title("Tables to migrate")
+        win.geometry("1000x640")
+        present = set(tables)
+        order = [t for t in generate.LOAD_ORDER if t in present] + sorted(present - set(generate.LOAD_ORDER))
+        kept = set(present)
+        for t in self.skip_tables & present:  # the last choice; what a skipped table is needed by goes too
+            kept = tick_tables(kept, t, False, present)
+        state = {"kept": kept}
+
+        ttk.Label(win, wraplength=960, padding=(8, 8, 8, 4), text=(
+            "Click a row to tick or untick it. Unticked tables are skipped: nothing is copied from them. "
+            "A 'copied as-is' table is then not created at all; a 'merge rules' table is still created, empty, "
+            "because the target's keys, triggers and view need it. Rows are the server's estimate."
+            + (f"  {never} bak_* backup table(s) are never migrated and not listed." if never else ""))).pack(fill="x")
+        bar = ttk.Frame(win, padding=(8, 4, 8, 8))
+        bar.pack(side="bottom", fill="x")
+        info = ttk.Label(win, foreground="#555", wraplength=960, padding=(8, 4, 8, 0))
+        info.pack(side="bottom", fill="x")
+        frame = ttk.Frame(win, padding=(8, 0, 8, 0))
+        frame.pack(fill="both", expand=True)
+        cols = ("tick", "table", "kind", "needs", "sources", "rows")
+        heads = ("Migrate", "Table", "Type", "Needs", "Sources", "Rows (est.)")
+        widths = (64, 280, 100, 170, 280, 100)
+        tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="none")
+        for c, h, w in zip(cols, heads, widths):
+            tree.heading(c, text=h)
+            tree.column(c, width=w, anchor="e" if c == "rows" else "center" if c == "tick" else "w",
+                        stretch=c in ("table", "sources"))
+        tree.tag_configure("skip", foreground="#999999")
+        sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        rows = {}
+        for t in order:
+            d = tables[t]
+            est = f"{d['rows']:,}" + ("+ ?" if d["unknown"] and d["rows"] else "") if d["rows"] or not d["unknown"] else "?"
+            rows[t] = tree.insert("", "end", values=(
+                "", t, "merge rules" if t in generate.LOAD_ORDER else "copied as-is",
+                ", ".join(p for p in generate.DEPENDS.get(t, []) if p in present), ", ".join(d["sources"]), est))
+        table_of = {iid: t for t, iid in rows.items()}
+
+        def show(note=""):
+            for t, iid in rows.items():
+                on = t in state["kept"]
+                tree.set(iid, "tick", "\u2611" if on else "\u2610")
+                tree.item(iid, tags=() if on else ("skip",))
+            info.configure(text=f"{len(state['kept'])} to migrate, {len(present) - len(state['kept'])} skipped.  {note}")
+
+        def on_click(event):
+            t = table_of.get(tree.identify_row(event.y))
+            if t:
+                before = state["kept"]
+                state["kept"] = tick_tables(before, t, t not in before, present)
+                also = sorted((before ^ state["kept"]) - {t})
+                show((("Also ticked, it needs: " if t in state["kept"] else "Also skipped, they need it: ")
+                      + ", ".join(also)) if also else "")
+
+        def set_all(on):
+            state["kept"] = set(present) if on else set()
+            show()
+
+        def use():
+            if not state["kept"]:
+                messagebox.showerror(TITLE, "Tick at least one table to migrate.", parent=win)
+                return
+            self.skip_tables = present - state["kept"]
+            self._show_skip()
+            win.destroy()
+
+        tree.bind("<Button-1>", on_click)
+        ttk.Button(bar, text="Use this selection", command=use).pack(side="left")
+        ttk.Button(bar, text="Cancel", command=win.destroy).pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text="Tick all", command=lambda: set_all(True)).pack(side="left", padx=(16, 0))
+        ttk.Button(bar, text="Untick all", command=lambda: set_all(False)).pack(side="left", padx=(8, 0))
+        show()
+
     def _open_logs(self):
         os.makedirs(LOG_DIR, exist_ok=True)
         os.startfile(LOG_DIR)
 
     # ---------- table list ----------
-    def _show_plan(self, rows):
+    def _show_plan(self, plan):
         self.tree.delete(*self.tree.get_children())
-        if rows is None:
-            self.plan_rows = []
+        self.db_tree.delete(*self.db_tree.get_children())
+        if plan is None:
+            self.plan_rows, self.plan_sources = [], []
             self.checked.clear()
             self.plan_info.configure(text=f"{self.vars['target'].get()} is not prepared yet - run step 1 first.")
             return
+        self.plan_sources, rows = plan
         self.plan_rows = rows
         names = {r[0] for r in rows}
         self.checked &= names
-        for t, kind, needs, sources, src_rows, loaded_rows, loaded_at in rows:
-            self.tree.insert("", "end", iid=t, tags=("loaded",) if loaded_at else (),
+        n_loaded = 0
+        for t, kind, needs, sources, src_rows, loaded_rows, loaded_at, loaded_from in rows:
+            n_have, n_done = len(sources.split(", ")), len([x for x in loaded_from.split(", ") if x])
+            n_loaded += n_done == n_have
+            self.tree.insert("", "end", iid=t, tags=("loaded",) if n_done == n_have else ("partial",) if n_done else (),
                              values=("☑" if t in self.checked else "☐", t, kind, needs, sources,
                                      f"{int(src_rows):,}" if src_rows else "", f"{int(loaded_rows):,}" if loaded_rows else "",
-                                     loaded_at or "not loaded"))
-        n_loaded = sum(1 for r in rows if r[6])
-        self.plan_info.configure(text=f"{len(rows)} tables, {n_loaded} loaded. Click a row to tick it; double-click "
-                                      "or right-click it to see its columns per source database. "
+                                     "all" if n_done == n_have else loaded_from, loaded_at or "not loaded"))
+        for s in self.plan_sources:
+            have = [r for r in rows if s in r[3].split(", ")]
+            done = sum(1 for r in have if s in r[7].split(", "))
+            self.db_tree.insert("", "end", iid=s, values=("☐" if s in self.db_off else "☑", s, f"{done} / {len(have)}"))
+        self.plan_info.configure(text=f"{len(rows)} tables, {n_loaded} fully loaded. Tick the databases to copy on the "
+                                      "left (top = wins conflicts, so copy in this order). Click a row to tick it; double-click "
+                                      "or right-click it to see its columns per source database and add indexes. "
                                       "Tables a ticked table needs are added automatically.")
+
+    def _on_db_click(self, event):
+        s = self.db_tree.identify_row(event.y)
+        if s:
+            self.db_off ^= {s}
+            self.db_tree.set(s, "tick", "☐" if s in self.db_off else "☑")
 
     def _on_tree_click(self, event):
         t = self.tree.identify_row(event.y)
@@ -832,14 +1196,16 @@ class App(tk.Tk):
 
         def work():
             try:
-                self.queue.put(("columns", (t, Runner(cfg, self.queue).columns(t))))
-            except (StepFailed, OSError) as e:
+                runner = Runner(cfg, self.queue)
+                self.queue.put(("columns", (t, runner.columns(t), runner.indexes(t))))
+            except (StepFailed, OSError, ValueError) as e:
                 self.queue.put(("error", f"Cannot read the columns of {t}:\n\n{e}"))
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _show_columns(self, table, info):
-        """Window: one row per column, one column per source (its type there, blank = missing)."""
+    def _show_columns(self, table, info, indexes):
+        """Window: one row per column, one column per source (its type there, blank = missing);
+        tick columns (first ticked = first in the index) to add an index on them."""
         sources, cols, src_cols, linked = info
         have = [s for s in sources if s in src_cols]
         rows = list(cols)
@@ -849,7 +1215,7 @@ class App(tk.Tk):
 
         win = tk.Toplevel(self)
         win.title(f"{table} - columns")
-        win.geometry(f"{min(1600, 540 + 160 * len(sources))}x600")
+        win.geometry(f"{min(1600, 600 + 160 * len(sources))}x720")
         if not linked:
             note = "The source links were removed (Finish), so only the target columns are known. Run step 1 again to compare."
         else:
@@ -860,10 +1226,32 @@ class App(tk.Tk):
                     "Orange = only in some sources, grey = added by the migration, red = not in the target.")
         ttk.Label(win, text=note, wraplength=1100, padding=(8, 8, 8, 4)).pack(fill="x")
 
+        # packed before the column list so they keep their room when the window is small
+        idx_box = ttk.LabelFrame(win, text="Indexes on this table", padding=6)
+        idx_box.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
+        idx_tree = ttk.Treeview(idx_box, columns=("name", "def"), show="headings", height=5, selectmode="none")
+        idx_tree.heading("name", text="Index")
+        idx_tree.heading("def", text="Definition")
+        idx_tree.column("name", width=280, stretch=False)
+        idx_tree.column("def", width=700)
+        idx_sb = ttk.Scrollbar(idx_box, orient="vertical", command=idx_tree.yview)
+        idx_tree.configure(yscrollcommand=idx_sb.set)
+        idx_tree.pack(side="left", fill="both", expand=True)
+        idx_sb.pack(side="right", fill="y")
+
+        bar = ttk.Frame(win, padding=(8, 0, 8, 6))
+        bar.pack(side="bottom", fill="x")
+        create_btn = ttk.Button(bar, text="Create index on ticked columns", state="disabled")
+        create_btn.pack(side="left")
+        idx_label = ttk.Label(bar, foreground="#555")
+        idx_label.pack(side="left", padx=(10, 0))
+
         frame = ttk.Frame(win, padding=(8, 0, 8, 8))
         frame.pack(fill="both", expand=True)
-        ids = ["column", "target"] + [f"s{i}" for i in range(len(sources))] + ["found"]
-        tree = ttk.Treeview(frame, columns=ids, show="headings")
+        ids = ["tick", "column", "target"] + [f"s{i}" for i in range(len(sources))] + ["found"]
+        tree = ttk.Treeview(frame, columns=ids, show="headings", selectmode="none")
+        tree.heading("tick", text="Index")
+        tree.column("tick", width=50, anchor="center", stretch=False)
         tree.heading("column", text="Column")
         tree.heading("target", text="Target type")
         tree.column("column", width=240, stretch=False)
@@ -876,13 +1264,16 @@ class App(tk.Tk):
         tree.tag_configure("partial", foreground="#b35900")
         tree.tag_configure("added", foreground="#888888")
         tree.tag_configure("srconly", foreground="#c00000")
+        col_of = {}  # tree row -> column, only those in the target can be indexed
         for c, typ in rows:
             n = sum(1 for s in have if c in src_cols[s])
             tag = ("srconly",) if not typ else ("added",) if linked and n == 0 else \
                   ("partial",) if n < len(have) else ()
-            tree.insert("", "end", tags=tag, values=[c, typ or "(not in target)"]
-                        + [src_cols.get(s, {}).get(c, "") for s in sources]
-                        + [f"{n}/{len(have)}" if linked else ""])
+            iid = tree.insert("", "end", tags=tag, values=["☐" if typ else "", c, typ or "(not in target)"]
+                              + [src_cols.get(s, {}).get(c, "") for s in sources]
+                              + [f"{n}/{len(have)}" if linked else ""])
+            if typ:
+                col_of[iid] = c
         ys = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         xs = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
@@ -891,6 +1282,74 @@ class App(tk.Tk):
         xs.grid(row=1, column=0, sticky="ew")
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
+
+        picked = []  # tree rows in the order they were ticked
+        current = {"indexes": indexes}
+
+        def show_picked():
+            for iid in col_of:
+                tree.set(iid, "tick", f"☑ {picked.index(iid) + 1}" if iid in picked else "☐")
+            cols = [col_of[i] for i in picked]
+            create_btn.configure(state="normal" if cols else "disabled")
+            idx_label.configure(text=index_name(table, cols, [x["name"] for x in current["indexes"]]) if cols
+                                else "Click columns to tick them; the first ticked comes first in the index.")
+
+        def on_click(event):
+            iid = tree.identify_row(event.y)
+            if iid in col_of:
+                picked.remove(iid) if iid in picked else picked.append(iid)
+                show_picked()
+
+        def show_indexes(rows):
+            current["indexes"] = rows
+            idx_tree.delete(*idx_tree.get_children())
+            for x in rows:
+                idx_tree.insert("", "end", values=(x["name"], x["def"]))
+            picked.clear()
+            show_picked()
+
+        tree.bind("<Button-1>", on_click)
+        create_btn.configure(command=lambda: self._create_index(table, [col_of[i] for i in picked],
+                                                                current["indexes"], show_indexes, win))
+        show_indexes(indexes)
+
+    def _create_index(self, table, cols, indexes, show_indexes, win):
+        if self.running:
+            messagebox.showinfo(TITLE, "Another job is running. Try again when it has finished.", parent=win)
+            return
+        try:
+            cfg = self._config()
+        except ValueError as e:
+            messagebox.showerror(TITLE, str(e), parent=win)
+            return
+        name = index_name(table, cols, [x["name"] for x in indexes])
+        same = [x["name"] for x in indexes if x["cols"] == cols]
+        warn = f"{same[0]} already indexes these columns in this order, so this one would only add cost.\n\n" if same else ""
+        if not messagebox.askyesno(
+                TITLE, f"{warn}Create index {name} in {cfg['target']}?\n\n"
+                       f"  {table} ({', '.join(cols)})\n\n"
+                       "The table cannot be written to while it builds, which can take a while on a big table. "
+                       "Reloading the table in step 2 keeps the index; running step 1 again with "
+                       "Drop or Clear removes it.",
+                icon="warning" if same else "question", parent=win):
+            return
+        ticked = set(self.checked)  # a job that ends OK clears the table ticks; this one should not
+
+        def finished():
+            self.checked |= ticked
+
+            def work():
+                try:
+                    rows = Runner(cfg, self.queue).indexes(table)
+                except (StepFailed, OSError, ValueError) as e:
+                    self.queue.put(("error", f"Index created, but the list could not be read:\n\n{e}"))
+                    return
+                self.queue.put(("indexes", (show_indexes, win, rows)))
+
+            threading.Thread(target=work, daemon=True).start()
+
+        self.after_done = finished
+        self._launch("create_index", table, cols, name, cfg=cfg)
 
     # ---------- compare databases ----------
     def _build_compare(self, nb):
@@ -1273,16 +1732,15 @@ class App(tk.Tk):
             self._acl_start(root, -1, False, True, path, paths)
 
     def _acl_backup_report(self):
-        """permission.ps1's ACL backups (*.acl.bak in a folder and below) to an .xlsx report, as read before it ran."""
+        """The chosen ACL backups of permission.ps1 (*.acl.bak) to an .xlsx report, as read before it ran."""
         if self.acl_proc:
             return
-        folder = filedialog.askdirectory(parent=self, title="Folder with permission.ps1's ACL backups (*.acl.bak)")
-        if not folder:
+        chosen = filedialog.askopenfilenames(parent=self, title="permission.ps1's ACL backups (Ctrl / Shift for several)",
+                                             filetypes=[("ACL backups", "*.acl.bak"), ("All files", "*.*")])
+        if not chosen:
             return
-        backups = acl_check.find_backups(folder)
-        if not backups:
-            messagebox.showerror(TITLE, f"No *.acl.bak files in {folder} or below.")
-            return
+        backups = sorted((os.path.normpath(f) for f in chosen), key=str.lower)   # parents first
+        folder = os.path.dirname(backups[0])
         os.makedirs(LOG_DIR, exist_ok=True)
         path = filedialog.asksaveasfilename(
             parent=self, title=f"Save the report of {len(backups):,} ACL backup(s)", defaultextension=".xlsx",
@@ -1641,7 +2099,8 @@ class App(tk.Tk):
             self.tree.set(r[0], "tick", "☑" if on else "☐")
 
     def _tick_not_loaded(self):
-        self.checked = {r[0] for r in self.plan_rows if not r[6]}
+        chosen = set(self.plan_sources) - self.db_off
+        self.checked = {r[0] for r in self.plan_rows if (set(r[3].split(", ")) & chosen) - set(r[7].split(", "))}
         for r in self.plan_rows:
             self.tree.set(r[0], "tick", "☑" if r[0] in self.checked else "☐")
 
@@ -1827,6 +2286,7 @@ class App(tk.Tk):
             self.log.insert("end", "Internal source names (schema src_<name>) made unique: "
                                    + "; ".join(f"{db} -> {name}" for db, name, _ in renamed) + "\n")
         self.checked.clear()
+        self.db_off.clear()
         self._launch("step1", cfg=cfg)
 
     def _step2(self):
@@ -1843,19 +2303,60 @@ class App(tk.Tk):
         if not self.checked:
             messagebox.showerror(TITLE, "Tick at least one table (click its row).")
             return
-        need, reload = closure(self.checked, self.plan_rows)
-        lines = [f"Copy data of {len(need)} table(s):"]
-        added = need - self.checked
-        if added:
-            lines.append("\nAdded automatically (needed): " + ", ".join(sorted(added)))
-        if reload:
-            lines.append("\nRELOAD - these already hold data; they are emptied and copied again:\n  "
-                         + ", ".join(sorted(reload))
-                         + "\nOther tables with a foreign key to them (e.g. MetadataHorizontal) are emptied too.")
-        lines.append("\nContinue?")
-        if not messagebox.askyesno(TITLE, "\n".join(lines), icon="warning" if reload else "question"):
+        chosen = [s for s in self.plan_sources if s not in self.db_off]
+        if not chosen:
+            messagebox.showerror(TITLE, "Tick at least one database (click its row, left of the table list).")
             return
-        self._launch("step2", sorted(need), sorted(reload), cfg=cfg)
+        p = plan_copy(self.checked, chosen, self.plan_rows)
+        if p["errors"]:
+            messagebox.showerror(TITLE, "These databases must be copied in list order, because the first one wins "
+                                        "when two hold the same record:\n\n  " + "\n  ".join(p["errors"][:12])
+                                 + (f"\n  ... and {len(p['errors']) - 12} more" if len(p["errors"]) > 12 else "")
+                                 + "\n\nTick those databases too, or copy them first. To use a different order, change "
+                                   "the Source databases list and run step 1 again."
+                                 + ("\n\nA ticked table with nothing new to copy would be emptied and reloaded, so even a "
+                                    "database already copied can be listed here. To copy only what is new, click "
+                                    "Tick not loaded." if p["reload"] else ""))
+            return
+        if not p["copies"]:
+            messagebox.showerror(TITLE, "None of the ticked tables are in the ticked databases.")
+            return
+        lines = [f"Copy data of {len(p['copies'])} table(s) from: " + ", ".join(
+            s for s in chosen if any(s in v for v in p["copies"].values()))]
+        lines.append("\nDatabases a table was already copied from are not copied again, unless it is reloaded below.")
+        lines.append("\nEach database is committed on its own, in list order. If one fails, the ones before it stay "
+                     "and you can carry on from there.")
+        if p["added"]:
+            lines.append("\nAdded automatically (needed): " + ", ".join(sorted(p["added"])))
+        if p["not_there"]:
+            lines.append("\nNot in the ticked databases, so not copied: " + ", ".join(sorted(p["not_there"])))
+        if p["reload"]:
+            lines.append("\nRELOAD - nothing new to copy for these, so they are emptied and copied again:\n  "
+                         + ", ".join(sorted(p["reload"]))
+                         + "\nOther tables with a foreign key to them (e.g. MetadataHorizontal) are emptied too.")
+        if p["lost"]:
+            lines.append("\nRows REMOVED by the reload, because these databases are not ticked (copy them again later):\n  "
+                         + "\n  ".join(f"{t}: {', '.join(v)}" for t, v in p["lost"].items()))
+        lines.append("\nContinue?")
+        if not messagebox.askyesno(TITLE, "\n".join(lines), icon="warning" if p["reload"] else "question"):
+            return
+        self._launch("step2", p["copies"], sorted(p["reload"]), p["holds"], cfg=cfg)
+
+    def _recheck(self):
+        if self.running:
+            return
+        try:
+            cfg = self._config()
+        except ValueError as e:
+            messagebox.showerror(TITLE, str(e))
+            return
+        ticked = set(self.checked)  # a job that ends OK clears the table ticks; this one copies nothing
+
+        def finished():
+            self.checked |= ticked
+
+        self.after_done = finished
+        self._launch("recheck", cfg=cfg)
 
     def _matrix(self):
         if self.running:
@@ -1910,6 +2411,17 @@ class App(tk.Tk):
                     if not self.running:
                         self.status.configure(text=f"psql: {find_psql()}")
                     self._show_columns(*data)
+                elif kind in ("table_list", "table_list_failed"):
+                    self.tables_btn.configure(state="normal")
+                    self.status.configure(text="Running..." if self.running else f"psql: {find_psql()}")
+                    if kind == "table_list":
+                        self._show_table_picker(*data)
+                    else:
+                        messagebox.showerror(TITLE, data)
+                elif kind == "indexes":
+                    show, win, rows = data
+                    if win.winfo_exists():  # the window may have been closed meanwhile
+                        show(rows)
                 elif kind in ("info", "error"):
                     if not self.running:
                         self.status.configure(text=f"psql: {find_psql()}")

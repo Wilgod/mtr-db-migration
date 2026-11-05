@@ -1,7 +1,6 @@
 """
 Horizontal metadata: one row per file for a fixed, config-driven set of metadata
-keys, while every other key stays in the vertical "Metadata" table (one row per
-key).
+keys. An upload saves only those keys; every other column in the file is ignored.
 
 config.json (next to this file):
 
@@ -14,10 +13,9 @@ config.json (next to this file):
       "ColumnMaxLength": 4000,           # varchar length of every metadata column
       "CurrentVersionOnly": true,        # skip rows whose VersionLabel is not 'Current'
       "RemoveMovedKeysFromMetadata": true
-    },
-    "SkipColumns": [ ... ]               # source columns stored nowhere
+    }
 
-Matching of horizontal keys / skip columns against file headers is case-insensitive.
+Matching of horizontal keys against file headers is case-insensitive.
 
 Upload (CSV or XLSX) - import_file():
     every row  ->  matched to Files by FileId (only if the row's other identities
@@ -26,9 +24,9 @@ Upload (CSV or XLSX) - import_file():
                    OriginalSharePointPath). Folder rows (FSObjType=1) and old
                    versions are skipped; unmatched rows go to a report CSV.
     configured keys  ->  1 row in the horizontal table (upsert by FileId)
-    other keys       ->  vertical "Metadata" rows (non-empty values only)
-    For every matched file the old Metadata rows of all keys present in the file
-    (horizontal + vertical) are replaced, so a re-upload never duplicates.
+    other columns    ->  ignored, stored nowhere
+    For every matched file the old Metadata rows of the configured keys present
+    in the file are deleted, so a key is not kept in both tables.
     One transaction per upload: it either fully applies or not at all.
 
 Existing data - convert_existing():
@@ -137,10 +135,6 @@ class HConfig:
         self.max_len = int(sec.get("ColumnMaxLength") or 4000)
         self.current_only = bool(sec.get("CurrentVersionOnly", True))
         self.remove_moved = bool(sec.get("RemoveMovedKeysFromMetadata", True))
-        skip = app_config.get("SkipColumns")
-        if skip is None:
-            skip = app_config.get("Data", {}).get("SkipColumns", [])
-        self.skip = {s.lower() for s in skip}
         self._validate()
         self.key_by_lower = {k.lower(): k for k in self.columns}
 
@@ -173,9 +167,6 @@ class HConfig:
     def horizontal_key(self, header):
         """Configured key for a source header, or None."""
         return self.key_by_lower.get(header.strip().lower())
-
-    def is_skipped(self, header):
-        return header.strip().lower() in self.skip
 
 
 def q(ident):
@@ -303,8 +294,8 @@ def read_rows(path, sheet=None):
 # ---------------------------------------------------------------------------
 
 def classify_headers(headers, cfg):
-    """-> (horizontal {idx: key}, vertical {idx: header}, skipped [header], ids {name: idx})"""
-    horiz, vert, skipped, ids = {}, {}, [], {}
+    """-> (horizontal {idx: key}, ignored [header], ids {name: idx}). Only horizontal columns are stored."""
+    horiz, ignored, ids = {}, [], {}
     lower_ids = {n.lower(): n for n in ID_COLUMNS}
     for i, h in enumerate(headers):
         if not h:
@@ -314,11 +305,9 @@ def classify_headers(headers, cfg):
         key = cfg.horizontal_key(h)
         if key:
             horiz[i] = key
-        elif cfg.is_skipped(h) or h.lower() in lower_ids:
-            skipped.append(h)
         else:
-            vert[i] = h[:256]
-    return horiz, vert, skipped, ids
+            ignored.append(h)
+    return horiz, ignored, ids
 
 
 _STAGE_DDL = """
@@ -329,7 +318,6 @@ CREATE TEMP TABLE mh_stage (
     file_ref    text,
     orig_path   text,
     h           jsonb,
-    v           jsonb,
     file_id     integer,
     matched_by  text
 ) ON COMMIT DROP;
@@ -340,19 +328,19 @@ def import_file(engine, cfg, path, sheet=None, log=print, progress=None, report_
     """Upload one CSV/XLSX. Returns a stats dict."""
     t0 = time.time()
     headers, rows = read_rows(path, sheet)
-    horiz, vert, skipped, ids = classify_headers(headers, cfg)
+    horiz, ignored, ids = classify_headers(headers, cfg)
     if not any(n in ids for n in ("FileId", "UniqueId", "FileRef", "OriginalSharePointPath")):
         raise ValueError("The file needs at least one of these columns to find the file: "
                          "FileId, UniqueId, FileRef, OriginalSharePointPath")
     log(f"{os.path.basename(path)}: {len(headers)} columns -> {len(horiz)} horizontal, "
-        f"{len(vert)} vertical, {len(skipped)} skipped/identity")
+        f"{len(ignored)} ignored/identity")
     missing = sorted(set(cfg.columns) - set(horiz.values()))
     if missing:
         log(f"Configured keys not in this file (left unchanged): {', '.join(missing)}")
 
     ensure_table(engine, cfg, log=lambda m: None)
     stats = dict(rows_read=0, folders_skipped=0, versions_skipped=0, staged=0,
-                 matched=0, unmatched=0, horizontal_rows=0, vertical_rows=0,
+                 matched=0, unmatched=0, horizontal_rows=0,
                  vertical_deleted=0, duplicates=0)
 
     def g(r, name):
@@ -369,7 +357,7 @@ def import_file(engine, cfg, path, sheet=None, log=print, progress=None, report_
         def flush():
             state["buf"].seek(0)
             # FORCE_NOT_NULL: empty identity fields stay '' (not NULL) so the match rules work
-            cur.copy_expert("COPY mh_stage (row_no, file_id_in, unique_id, file_ref, orig_path, h, v) "
+            cur.copy_expert("COPY mh_stage (row_no, file_id_in, unique_id, file_ref, orig_path, h) "
                             "FROM STDIN WITH (FORMAT csv, "
                             "FORCE_NOT_NULL (file_id_in, unique_id, file_ref, orig_path))", state["buf"])
             state["buf"] = io.StringIO()
@@ -389,11 +377,10 @@ def import_file(engine, cfg, path, sheet=None, log=print, progress=None, report_
                     stats["versions_skipped"] += 1
                 continue
             hv = {k: (r[i][:cfg.max_len] if i < len(r) else "") for i, k in horiz.items()}
-            vv = {k: r[i][:4000] for i, k in vert.items() if i < len(r) and r[i] != ""}
             uid = g(r, "UniqueId").strip("{}").lower()
             state["w"].writerow([stats["rows_read"], g(r, "FileId"), uid, g(r, "FileRef"),
                                  g(r, "OriginalSharePointPath"),
-                                 json.dumps(hv, ensure_ascii=False), json.dumps(vv, ensure_ascii=False)])
+                                 json.dumps(hv, ensure_ascii=False)])
             state["n"] += 1
             stats["staged"] += 1
             if state["n"] >= STAGE_BATCH:
@@ -468,24 +455,15 @@ def import_file(engine, cfg, path, sheet=None, log=print, progress=None, report_
                     "UpdatedAt" = CURRENT_TIMESTAMP""", (*present, os.path.basename(path)[:1000]))
             stats["horizontal_rows"] = cur.rowcount
 
-        # ---- vertical: replace keys present in this file, insert the rest ---
+        # ---- Metadata: remove the configured keys present in this file ------
         # exact spellings: config keys, plus the file's own header text for them
-        keys = sorted(set(horiz.values()) | {headers[i] for i in horiz} | set(vert.values()))
+        keys = sorted(set(horiz.values()) | {headers[i] for i in horiz})
         if keys:
             cur.execute("""
                 DELETE FROM public."Metadata" m
                 USING mh_stage s
                 WHERE m."FileId" = s.file_id AND m."MetadataKey" = ANY(%s)""", (keys,))
             stats["vertical_deleted"] = cur.rowcount
-        if vert:
-            cur.execute("""
-                INSERT INTO public."Metadata" ("FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName")
-                SELECT s.file_id, e.key, e.value, 'String', f."SiteName"
-                FROM mh_stage s
-                JOIN public."Files" f ON f."FileId" = s.file_id
-                CROSS JOIN LATERAL jsonb_each_text(s.v) e
-                WHERE e.value <> ''""")
-            stats["vertical_rows"] = cur.rowcount
 
         # ---- unmatched report ------------------------------------------------
         if stats["unmatched"]:
@@ -510,8 +488,8 @@ def import_file(engine, cfg, path, sheet=None, log=print, progress=None, report_
         raw.close()
 
     stats["seconds"] = round(time.time() - t0, 1)
-    log(f"Done: {stats['horizontal_rows']:,} horizontal rows upserted, {stats['vertical_rows']:,} vertical "
-        f"Metadata rows written ({stats['vertical_deleted']:,} old rows replaced)  [{stats['seconds']}s]")
+    log(f"Done: {stats['horizontal_rows']:,} horizontal rows upserted, "
+        f"{stats['vertical_deleted']:,} old Metadata rows of those keys removed  [{stats['seconds']}s]")
     return stats
 
 

@@ -30,6 +30,11 @@ Tables with a rule in LOAD_ORDER are merged by those rules. Any other table
 (except bak_*) is copied as-is into a generated table: union of its columns
 over all sources plus a source tag column; no de-duplication.
 
+"skip_tables" in sources.json leaves tables out as if no source had them: nothing is
+linked, staged or copied. A copied-as-is table is then not created either; a table
+with merge rules still exists, empty, because 00_target_schema.sql and
+04_finalize.sql are static (its keys, triggers and view need it).
+
 Staging layout ("Through this PC": MtrDbMigration, run_consolidation.ps1 -Staging):
 for a login that may only create tables in schema public. No postgres_fdw and no
 new schemas: every source table is copied by the client into a staging table
@@ -168,6 +173,13 @@ DEPENDS = {
 }
 
 
+# Two-step mode: which source each table was copied from (step 2 can copy one source at a time).
+LOADED_SOURCE_DDL = ("CREATE TABLE _merge.loaded_source (\n    table_name text NOT NULL REFERENCES _merge.table_plan,\n"
+                     "    source_db varchar(64) NOT NULL REFERENCES _merge.source,\n"
+                     "    loaded_at timestamptz NOT NULL DEFAULT now(),\n"
+                     "    PRIMARY KEY (table_name, source_db)\n);\n")
+
+
 # ---------------------------------------------------------------------------
 # Parsing
 # ---------------------------------------------------------------------------
@@ -299,6 +311,8 @@ class Gen:
         self.cfg = cfg
         self.staging = staging
         self.sources = []
+        self.skip = set(cfg.get("skip_tables") or [])
+        found = set()
         for s in cfg["sources"]:
             s = {"dbname": s} if isinstance(s, str) else dict(s)
             if not s.get("enabled", True):
@@ -324,11 +338,13 @@ class Gen:
                 if schema_loader is None:
                     sys.exit(f"{s['name']}: no \"dump\" file and no live connection to read its schema")
                 tables = schema_loader(s)
-            s["tables"] = {t: dict(c) for t, c in tables.items()}
+            found.update(tables)
+            s["tables"] = {t: dict(c) for t, c in tables.items() if t not in self.skip}
         with open(os.path.join(SQL_DIR, "00_target_schema.sql"), encoding="utf-8") as f:
             self.target = parse_tables(f.read())
         self.build_generic()
         self.check_coverage()
+        self.check_skip(found)
 
     # -- tables without a rule: copied as-is --------------------------------
     def build_generic(self):
@@ -399,6 +415,15 @@ class Gen:
                         errors.append(f"{s['name']}.{t}.{c}: NOT NULL target column absent in source and no default rule")
         if errors:
             sys.exit("Mapping errors:\n  " + "\n  ".join(errors))
+
+    def check_skip(self, found):
+        """A table cannot be copied without the tables it needs (DEPENDS)."""
+        if not self.plan_tables():
+            sys.exit("skip_tables in sources.json leaves no table to migrate")
+        errors = [f"{t} needs {p}, which is in skip_tables" for t in self.plan_tables()
+                  for p in DEPENDS.get(t, []) if p in self.skip and p in found]
+        if errors:
+            sys.exit("Table selection errors:\n  " + "\n  ".join(errors))
 
     def has(self, s, table, col=None):
         if table not in s["tables"]:
@@ -700,6 +725,7 @@ class Gen:
                    "    kind text NOT NULL,\n    depends_on text[] NOT NULL,\n    sources text NOT NULL,\n    source_rows bigint\n);")
         out.append("CREATE TABLE _merge.loaded_table (\n    table_name text PRIMARY KEY REFERENCES _merge.table_plan,\n"
                    "    loaded_at timestamptz NOT NULL DEFAULT now(),\n    row_count bigint NOT NULL\n);\n")
+        out.append(LOADED_SOURCE_DDL)
         out.extend(self.setup_parts())
         out.append("-- new sites added later by the set_site_id() trigger must not reuse an ID")
         out.append("SELECT setval('public.\"Sites_SiteId_seq\"', COALESCE((SELECT MAX(\"SiteId\") FROM public.\"Sites\"), 0) + 1, false);\n")
@@ -716,23 +742,42 @@ class Gen:
         out.append("COMMIT;\n")
         return "\n".join(out)
 
-    def load_script(self, tables, reload=()):
-        """Copy the rows of `tables` (a closed set: parents loaded or included). Tables in
-        `reload` are emptied first (TRUNCATE ... CASCADE) together with their merge log."""
-        order = [t for t in self.plan_tables() if t in tables]
-        out = [HEADER.format(name="load.sql", what="Step 2 of the two-step mode: copy the rows of: " + ", ".join(order))]
+    def load_batches(self, copies, reload=()):
+        """[(source name, SQL)], one transaction per source in priority order, for `copies`
+        {table: source names} (a closed set: parents loaded or included, see
+        migrate_app.plan_copy). A failure loses only the source it happens in, and each table
+        records the sources it holds, so the next run carries on from there. Tables in `reload`
+        are emptied (TRUNCATE ... CASCADE) with their merge log in the first batch, so its
+        failure leaves them as they were; they may have nothing to copy."""
+        batches, pending = [], set(reload)
+        for s in self.sources:
+            tables = [t for t in self.plan_tables() if s["name"] in copies.get(t, ())]
+            if tables:
+                batches.append((s["name"], self.load_batch(s, tables, pending)))
+                pending = set()
+        return batches
+
+    def load_batch(self, s, tables, reload):
+        """One source's tables, parents first, as one transaction, emptying `reload` first."""
+        n = s["name"]
+        out = [HEADER.format(name="load.sql", what=f"Step 2 of the two-step mode: copy from {n}: " + ", ".join(tables))]
         out.append("\\set ON_ERROR_STOP on\n\\timing on\nBEGIN;\n")
         if reload:
-            rl = [t for t in order if t in reload]
+            rl = [t for t in self.plan_tables() if t in reload]
             out.append("-- ===== Reload: empty these tables first =====")
             out.append("TRUNCATE " + ", ".join(f"public.{q(t)}" for t in rl) + " CASCADE;")
             out.append("DELETE FROM _merge.conflict_log WHERE table_name IN (" + ", ".join(lit(t) for t in rl) + ");")
             if "ADGroups" in rl:
                 out.append("DELETE FROM _merge.adgroup_map;")
+            out.append("DELETE FROM _merge.loaded_source WHERE table_name IN (" + ", ".join(lit(t) for t in rl) + ");")
             out.append("DELETE FROM _merge.loaded_table WHERE table_name IN (" + ", ".join(lit(t) for t in rl) + ");\n")
-        for t in order:
-            out.extend(self.table_parts(t))
-            out.append(f"INSERT INTO _merge.loaded_table (table_name, row_count) SELECT {lit(t)}, COUNT(*) FROM public.{q(t)};\n")
+        for t in tables:
+            out.extend(self.table_parts(t, [n]))
+            out.append(f"INSERT INTO _merge.loaded_source (table_name, source_db) VALUES ({lit(t)}, {lit(n)});")
+            out.append(f"INSERT INTO _merge.loaded_table (table_name, row_count) SELECT {lit(t)}, COUNT(*) FROM public.{q(t)}\n"
+                       "ON CONFLICT (table_name) DO UPDATE SET row_count = EXCLUDED.row_count, loaded_at = now();\n")
+        out.append("-- the next source's conflict checks join against these tables: give the planner their new size")
+        out.append("ANALYZE " + ", ".join(f"public.{q(t)}" for t in tables) + ";\n")
         out.append("COMMIT;\n")
         return "\n".join(out)
 
@@ -755,16 +800,18 @@ class Gen:
                        + "\n) u WHERE n IS NOT NULL AND n <> '';\n")
         return out
 
-    def table_parts(self, table):
+    def table_parts(self, table, sources=None):
+        """The rows of `table` from `sources` (names; default all), highest priority first."""
+        chosen = [s for s in self.sources if sources is None or s["name"] in sources]
         out = []
         if table in self.generic:
             out.append(f"-- ===== {table} (copied as-is) " + "=" * max(3, 56 - len(table)))
-            for s in self.sources:
+            for s in chosen:
                 if self.has(s, table):
                     out.append(f"\\echo '{table} <- {s['name']}'")
                     out.append(self.generic_insert(s, table) + "\n")
             return out
-        srcs = [s for s in self.sources if self.has(s, table)]
+        srcs = [s for s in chosen if self.has(s, table)]
         out.append(f"-- ===== {table} " + "=" * max(3, 70 - len(table)))
         if not srcs:
             out.append("-- (no source has this table)\n")
@@ -841,8 +888,9 @@ class Gen:
 
     # -- 05 verify ----------------------------------------------------------
     def verify(self, tables=None):
-        """All tables, or only `tables` (two-step mode: the tables just loaded)."""
-        want = (lambda t: True) if tables is None else (lambda t: t in tables)
+        """All tables, or only `tables` {table: source names} (two-step mode: the tables just
+        loaded, with every source each now holds)."""
+        want = (lambda t, s: True) if tables is None else (lambda t, s: s["name"] in tables.get(t, ()))
         out = [HEADER.format(name="05_verify.sql", what=
             "Row-count reconciliation: every source row is either in the target or in _merge.conflict_log.\n"
             "-- Run after 04_finalize.sql while the sources are still attached.")]
@@ -850,7 +898,7 @@ class Gen:
         rows = []
         for t in LOAD_ORDER:
             for s in self.sources:
-                if not want(t) or not self.has(s, t) or t in ("ActiveLanIds", "Folder_Structure_Final_Analysis"):
+                if not want(t, s) or not self.has(s, t) or t in ("ActiveLanIds", "Folder_Structure_Final_Analysis"):
                     continue
                 n = s["name"]
                 ft = self.ft(s, t)
@@ -876,20 +924,20 @@ class Gen:
                            f"AND {q(idcol)} <= {self.off(dom, n)} + (SELECT src_max_id FROM _merge.id_offset WHERE table_name = {lit(dom)} AND source_db = {lit(n)}))")
                 rows.append(f"SELECT {lit(t)} AS table_name, {lit(n)} AS source_db, {src_cnt} AS source_rows, {exp} AS expected, {tgt} AS loaded")
         # union tables
-        lan = [f'SELECT "LanId" FROM {self.ft(s, "ActiveLanIds")}' for s in self.sources if self.has(s, "ActiveLanIds")]
-        if lan and want("ActiveLanIds"):
+        lan = [f'SELECT "LanId" FROM {self.ft(s, "ActiveLanIds")}' for s in self.sources
+               if self.has(s, "ActiveLanIds") and want("ActiveLanIds", s)]
+        if lan:
             rows.append("SELECT 'ActiveLanIds', '(all, de-duplicated)', (SELECT COUNT(*) FROM (" + " UNION ALL ".join(lan) + ") a), "
                         "(SELECT COUNT(*) FROM (" + " UNION ".join(lan) + ") a), (SELECT COUNT(*) FROM public.\"ActiveLanIds\")")
-        fs = [f'SELECT 1 FROM {self.ft(s, "Folder_Structure_Final_Analysis")}' for s in self.sources if self.has(s, "Folder_Structure_Final_Analysis")]
-        if fs and want("Folder_Structure_Final_Analysis"):
+        fs = [f'SELECT 1 FROM {self.ft(s, "Folder_Structure_Final_Analysis")}' for s in self.sources
+              if self.has(s, "Folder_Structure_Final_Analysis") and want("Folder_Structure_Final_Analysis", s)]
+        if fs:
             rows.append("SELECT 'Folder_Structure_Final_Analysis', '(all)', (SELECT COUNT(*) FROM (" + " UNION ALL ".join(fs) + ") a), "
                         "(SELECT COUNT(*) FROM (" + " UNION ALL ".join(fs) + ") a), (SELECT COUNT(*) FROM public.\"Folder_Structure_Final_Analysis\")")
         for t in sorted(self.generic):
-            if not want(t):
-                continue
             tag = q(self.generic[t]["tag"])
             for s in self.sources:
-                if self.has(s, t):
+                if self.has(s, t) and want(t, s):
                     cnt = f"(SELECT COUNT(*) FROM {self.ft(s, t)})"
                     rows.append(f"SELECT {lit(t)}, {lit(s['name'])}, {cnt}, {cnt}, "
                                 f"(SELECT COUNT(*) FROM public.{q(t)} WHERE {tag} = {lit(s['name'])})")
@@ -1038,6 +1086,8 @@ def main(schema_loader=None, staging=False, out_dir=None):
                                 for i, s in enumerate(g.sources, 1)))
     if g.generic:
         print("copied as-is (no merge rule):", ", ".join(sorted(g.generic)))
+    if g.skip:
+        print("skipped (skip_tables):", ", ".join(sorted(g.skip)))
     return g
 
 

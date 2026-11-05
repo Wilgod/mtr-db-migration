@@ -3,8 +3,8 @@ Metadata Horizontal — desktop tool.
 
 Upload a CSV/XLSX of SharePoint metadata: the fixed columns listed in
 config.json -> HorizontalMetadata.Columns go to one row per file in the
-horizontal table; every other (non-skipped) column stays in the vertical
-"Metadata" table. "Build Metadata Matrix" makes a separate table with every
+horizontal table; every other column is ignored. "Build Metadata Matrix" makes
+a separate table from the "Metadata" table, with every
 distinct MetadataKey as a column (Metadata is left unchanged). Logic lives in
 metadata_horizontal.py.
 

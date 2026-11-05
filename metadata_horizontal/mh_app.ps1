@@ -5,21 +5,22 @@
 .DESCRIPTION
   Upload a CSV/XLSX of SharePoint metadata: the fixed columns listed in
   config.json -> HorizontalMetadata.Columns go to one row per file in the
-  horizontal table; every other (non-skipped) column stays in the vertical
-  "Metadata" table. "Build Matrix" makes a separate table with every distinct
+  horizontal table; every other column is ignored. "Build Matrix" makes a
+  separate table from the "Metadata" table, with every distinct
   MetadataKey as a column (Metadata is left unchanged). Logic lives in
   MetadataHorizontal.psm1; the database is reached through psql.exe.
 
   Start: double-click mh_app.cmd, or
     powershell -NoProfile -STA -ExecutionPolicy Bypass -File mh_app.ps1
+  With -RunSchedule <job file> it runs one scheduled SharePoint export with no window, then exits.
 #>
-param([string] $ConfigPath)
+param([string] $ConfigPath, [string] $RunSchedule)
 
 $ErrorActionPreference = 'Stop'
 # folder of the app: this script's folder, or the exe's folder when built by build_exe.ps1
 $AppDir = if ($PSScriptRoot) { $PSScriptRoot } else { [AppDomain]::CurrentDomain.BaseDirectory.TrimEnd('\') }
 if (-not $ConfigPath) { $ConfigPath = Join-Path $AppDir 'config.json' }
-if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
+if (-not $RunSchedule -and [Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
     # WinForms dialogs need a single-threaded apartment
     Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass',
         '-File', "`"$PSCommandPath`"", '-ConfigPath', "`"$ConfigPath`"")
@@ -43,6 +44,18 @@ function Import-AppModules($List) {
         if ($m.Path) { Import-Module $m.Path -Global -Force -DisableNameChecking }
         else { New-Module -Name $m.Name -ScriptBlock ([scriptblock]::Create($m.Source)) | Import-Module -Global -Force -DisableNameChecking }
     }
+}
+if ($RunSchedule) {
+    # nobody is watching: in the exe, a warning, progress or uncaught error would open a box and wait forever
+    $global:WarningPreference = 'SilentlyContinue'; $global:ProgressPreference = 'SilentlyContinue'; $global:InformationPreference = 'SilentlyContinue'
+    $exitCode = 1
+    try {
+        Import-AppModules $Modules
+        $exitCode = @(Invoke-SpScheduledExport -JobPath $RunSchedule -LogDir (Join-Path $AppDir 'logs'))[-1]
+    } catch {
+        try { [IO.File]::AppendAllText((Join-Path $AppDir 'schedule_error.log'), "$(Get-Date -Format s) $RunSchedule $($_.Exception.Message)`r`n") } catch { }
+    }
+    exit $exitCode
 }
 Import-AppModules $Modules
 
@@ -100,25 +113,62 @@ function Show-Message([string] $Text, [string] $Title, [string] $Icon = 'Informa
 }
 
 function Confirm-Action([string] $Text, [string] $Title) {
-    [Windows.Forms.MessageBox]::Show($Text, $Title, 'YesNo', 'Question') -eq 'Yes'
+    # owned by the main window: it must not open behind other apps when a long job ends
+    [Windows.Forms.MessageBox]::Show($form, $Text, $Title, 'YesNo', 'Question') -eq 'Yes'
 }
 
 function Write-Log([string] $Status, [string] $Message) {
     $lines = $Message.Trim() -split '\r?\n'
     $text = '[{0:HH:mm:ss}] {1,-8} | {2}' -f (Get-Date), $Status, ($lines -join ("`r`n" + (' ' * 22)))
+    # thousands of request lines must not slow the window: keep the newest part (requests are also in their own file)
+    if ($logBox.TextLength -gt 2000000) { $logBox.Text = $logBox.Text.Substring(1000000) }
     $logBox.AppendText($text + "`r`n")
 }
 
 function Set-Status([string] $Message, $Color = $ColorGray) {
     $status.Text = $Message
     $status.ForeColor = $Color
+    if ($script:SpStatus) { $script:SpStatus.Text = $Message; $script:SpStatus.ForeColor = $Color }
+}
+
+function New-JobBar {
+    $b = New-Object Windows.Forms.ProgressBar
+    $b.Width = 260; $b.Height = 16; $b.Minimum = 0; $b.Maximum = 100; $b.Visible = $false
+    $b.Margin = New-Object Windows.Forms.Padding(4, 6, 4, 4)
+    $b
+}
+
+function Set-JobBar($Percent) {
+    <# 0-100, -1 = moving bar when there is no percent to show, $null = hide. Shown in the main and SharePoint windows. #>
+    foreach ($b in @($jobBar, $script:SpBar)) {
+        if (-not $b) { continue }
+        if ($null -eq $Percent) { $b.Visible = $false; continue }
+        if ([double]$Percent -lt 0) { $b.Style = 'Marquee' }
+        else { $b.Style = 'Continuous'; $b.Value = [Math]::Max(0, [Math]::Min(100, [int][double]$Percent)) }
+        $b.Visible = $true
+    }
+}
+
+function Update-JobBar($Percent, [string] $Text) {
+    if (-not $script:BarStart) { $script:BarStart = [Diagnostics.Stopwatch]::StartNew() }
+    $script:BarText = $Text
+    Set-JobBar $Percent
+    Show-JobElapsed
+}
+
+function Show-JobElapsed {
+    # runs on the timer too: the clock keeps moving during steps with no news, so the app never looks stuck
+    if (-not $script:BarStart) { return }
+    $e = $script:BarStart.Elapsed
+    $text = '{0}  |  elapsed {1}:{2:00}:{3:00}' -f $script:BarText, [int][Math]::Floor($e.TotalHours), $e.Minutes, $e.Seconds
+    if ($status.Text -cne $text) { Set-Status $text }
 }
 
 $WorkerScript = {
     param($Modules, $Sync, $Title, $BodyText, $Db, $Arg)
     $ErrorActionPreference = 'Stop'
     $log = { param($m) $Sync.Queue.Enqueue(@('log', $Title, [string]$m)) }.GetNewClosure()
-    $setStatus = { param($m) $Sync.Queue.Enqueue(@('status', [string]$m)) }.GetNewClosure()
+    $setStatus = { param($m, $percent) $Sync.Queue.Enqueue(@('status', [string]$m, $percent)) }.GetNewClosure()
     try {
         foreach ($m in $Modules) {
             if ($m.Path) { Import-Module $m.Path -DisableNameChecking }
@@ -156,6 +206,8 @@ function Start-MhJob {
 function Complete-MhJob {
     $j = $script:Job
     $script:Job = $null
+    $script:BarStart = $null
+    Set-JobBar $null
     try { $res = @($j.PS.EndInvoke($j.Handle)) | Select-Object -Last 1 }
     catch { $res = @{ Ok = $false; Error = $_.Exception.Message } }
     if (-not $res) { $res = @{ Ok = $false; Error = 'the job ended without a result' } }
@@ -372,9 +424,9 @@ function Show-SharePointExport {
     $f.StartPosition = 'CenterParent'
     $f.BackColor = $ColorDark; $f.ForeColor = $ColorWhite; $f.Font = $form.Font
     $grid2 = New-Object Windows.Forms.TableLayoutPanel
-    $grid2.Dock = 'Fill'; $grid2.ColumnCount = 1; $grid2.RowCount = 6
+    $grid2.Dock = 'Fill'; $grid2.ColumnCount = 1; $grid2.RowCount = 7
     $grid2.Padding = New-Object Windows.Forms.Padding(8)
-    foreach ($st in @(@('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('Percent', 100), @('AutoSize', 0))) {
+    foreach ($st in @(@('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('Percent', 100), @('AutoSize', 0), @('AutoSize', 0))) {
         [void]$grid2.RowStyles.Add((New-Object Windows.Forms.RowStyle($st[0], $st[1])))
     }
     $f.Controls.Add($grid2)
@@ -445,9 +497,21 @@ function Show-SharePointExport {
     $grid2.Controls.Add($script:SpTree, 0, 4)
 
     $row = New-Flow $ColorDark
+    $row.Controls.Add((New-Label 'File name'))
+    $script:SpFileName = New-TextBox 'sharepoint_metadata_{date}_{time}.xlsx' 300
+    $row.Controls.Add($script:SpFileName)
     $row.Controls.Add((New-Button 'Export to Excel...' $ColorOrange { Start-SpExport } -Bold -Fore ([Drawing.Color]::Black)))
-    $row.Controls.Add((New-Label 'One row per file, one column per field. Progress and results appear in the main window.'))
+    $row.Controls.Add((New-Button 'Schedule...' $ColorBlue { Show-SpSchedule } -Bold))
+    $row.Controls.Add((New-Label '{date} and {time} are filled in when it runs. End the name with .csv for a CSV file.'))
     $grid2.Controls.Add($row, 0, 5)
+
+    $row = New-Flow $ColorDark
+    $script:SpBar = New-JobBar
+    $row.Controls.Add($script:SpBar)
+    $script:SpStatus = New-Label ''
+    $script:SpStatus.Margin = New-Object Windows.Forms.Padding(4, 6, 4, 4)
+    $row.Controls.Add($script:SpStatus)
+    $grid2.Controls.Add($row, 0, 6)
 
     # closing only hides the window, so the loaded library list is kept
     $f.Add_FormClosing({ param($sender, $e) if ($e.CloseReason -eq 'UserClosing') { $e.Cancel = $true; $sender.Hide() } })
@@ -553,9 +617,9 @@ function Start-SpLoad {
     $user = if ($script:SpWindows.Checked) { '' } else { $script:SpUser.Text.Trim() }
     if (-not $script:SpWindows.Checked -and -not $user) { Show-Message 'Enter the user as DOMAIN\user.' 'User' 'Warning'; return }
     Start-MhJob 'SharePoint' -NoConnection -Arg @{ Url = $url; User = $user; Password = $script:SpPassword.Text
-                                                 Recurse = $script:SpSubsites.Checked } -Body {
+                                                 Recurse = $script:SpSubsites.Checked; LogDir = (Join-Path $AppDir 'logs') } -Body {
         param($Db, $Arg, $Log, $Status)
-        $sp = New-SpSession $Arg.Url $Arg.User $Arg.Password
+        $sp = New-SpSession $Arg.Url $Arg.User $Arg.Password (New-SpRequestLog $Arg.LogDir $Log)
         & $Log "Connected to $($sp.Url) ($($sp.Title))"
         $libs = New-Object 'Collections.Generic.List[hashtable]'
         foreach ($w in (Get-SpWebs $sp -Recurse:$Arg.Recurse -Log $Log)) {
@@ -581,13 +645,25 @@ function Start-SpExport {
     $dlg = New-Object Windows.Forms.SaveFileDialog
     $dlg.Title = 'Save SharePoint metadata'
     $dlg.Filter = 'Excel workbook (*.xlsx)|*.xlsx|CSV UTF-8 (*.csv)|*.csv'
-    $dlg.FileName = "sharepoint_metadata_$(Get-Date -Format 'yyyyMMdd_HHmm').xlsx"
+    try { $dlg.FileName = Expand-SpFileName $script:SpFileName.Text }
+    catch { Show-Message $_.Exception.Message 'File name' 'Warning'; return }
+    if ($dlg.FileName -match '\.csv$') { $dlg.FilterIndex = 2 }
     if ($dlg.ShowDialog($script:SpForm) -ne 'OK') { return }
-    if ($dlg.FileName -match '\.xlsx$' -and -not (Get-Module -ListAvailable ImportExcel)) { Show-ImportExcelHelp; return }
-    Start-MhJob 'SP export' -NoConnection -Arg @{ Sp = $script:SpSession; Libs = $sel; Path = $dlg.FileName } -Body {
+    $resume = $false
+    $old = $null
+    try { $old = Get-SpUnfinished $dlg.FileName $sel } catch { }
+    if ($old) {
+        $ask = ("An unfinished export of these same libraries is in this folder, last saved {0:yyyy-MM-dd HH:mm}, with {1:N0} items read.`n`n" +
+                "Yes: continue it from there.`nNo: start again and delete it.") -f $old.Saved, $old.Items
+        $resume = [Windows.Forms.MessageBox]::Show($script:SpForm, $ask, 'Export from SharePoint', 'YesNoCancel', 'Question')
+        if ($resume -eq 'Cancel') { return }
+        $resume = $resume -eq 'Yes'
+    }
+    Start-MhJob 'SP export' -NoConnection -Arg @{ Sp = $script:SpSession; Libs = $sel; Path = $dlg.FileName; Resume = $resume; LogDir = (Join-Path $AppDir 'logs') } -Body {
         param($Db, $Arg, $Log, $Status)
-        $progress = { param($n, $lib) & $Status ('SP export: {0:N0} files read ({1})...' -f $n, $lib) }.GetNewClosure()
-        Export-SpMetadata -Sp $Arg.Sp -Libraries $Arg.Libs -Path $Arg.Path -Log $Log -Progress $progress
+        $Arg.Sp.RequestLog = New-SpRequestLog $Arg.LogDir $Log       # made in this job: a script block runs where it was made
+        $progress = { param($percent, $text) & $Status $text $percent }.GetNewClosure()
+        Export-SpMetadata -Sp $Arg.Sp -Libraries $Arg.Libs -Path $Arg.Path -Log $Log -Progress $progress -Resume:$Arg.Resume
     } -OnDone {
         param($r)
         $saved = "Saved {0:N0} files from {1} libraries to`n{2}" -f $r.files, $r.libraries, $r.path
@@ -596,6 +672,168 @@ function Start-SpExport {
         } else {
             Show-Message "$saved`n`nConnect to the database and click Upload CSV/XLSX to load it." 'Export from SharePoint'
         }
+    }
+}
+
+function Update-SpScheduleList {
+    <# Fill the Scheduled exports list from Task Scheduler. #>
+    $script:SchedList.Items.Clear()
+    foreach ($s in @(Get-SpSchedules (Join-Path $AppDir 'schedules'))) {
+        $i = New-Object Windows.Forms.ListViewItem($s.Name)
+        foreach ($v in $s.Repeat, $s.NextRun, $s.LastRun, $s.Result, ([string]$s.Libraries), $s.File) { [void]$i.SubItems.Add([string]$v) }
+        [void]$script:SchedList.Items.Add($i)
+    }
+}
+
+function Get-SpScheduleSelected {
+    if ($script:SchedList.SelectedItems.Count) { return $script:SchedList.SelectedItems[0].Text }
+    Show-Message 'Click a schedule in the list first.' 'Scheduled exports' 'Warning'
+}
+
+function Save-SpScheduleFromForm {
+    if (-not $script:SpLibs) { Show-Message 'Load the libraries and tick the ones to export first.' 'Schedule' 'Warning'; return }
+    $sel = @(for ($i = 0; $i -lt $script:SpLibs.Count; $i++) { if ($script:SpChecked[$i]) { $script:SpLibs[$i] } })
+    if (-not $sel.Count) { Show-Message 'Tick at least one library.' 'Schedule' 'Warning'; return }
+    $name = $script:SchedName.Text.Trim()
+    $folder = $script:SchedFolder.Text.Trim()
+    $at = $script:SchedAt.Value
+    $repeat = [string]$script:SchedRepeat.SelectedItem
+    if (-not $name) { Show-Message 'Enter a name for this schedule.' 'Schedule' 'Warning'; return }
+    if (-not [IO.Path]::IsPathRooted($folder) -or -not (Test-Path -LiteralPath $folder -PathType Container)) {
+        Show-Message "This folder does not exist:`n$folder" 'Schedule' 'Warning'; return
+    }
+    if ($repeat -eq 'Once' -and $at -le (Get-Date)) { Show-Message 'The run time has already passed.' 'Schedule' 'Warning'; return }
+    try { $fileName = Expand-SpFileName $script:SpFileName.Text } catch { Show-Message $_.Exception.Message 'File name' 'Warning'; return }
+    if (@($script:SchedList.Items | Where-Object { $_.Text -eq $name }).Count -and
+        [Windows.Forms.MessageBox]::Show($script:SchedForm, "Replace the schedule '$name'?", 'Schedule', 'YesNo', 'Question') -ne 'Yes') { return }
+    # the exe starts itself; run from source, PowerShell starts this script
+    if ($EmbeddedModules) { $exe = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName; $prefix = '' }
+    else { $exe = (Get-Process -Id $PID).Path; $prefix = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`" " }
+    try {
+        $job = Save-SpSchedule -Sp $script:SpSession -Libraries $sel -Name $name -Folder $folder -FileName $script:SpFileName.Text.Trim() `
+            -Repeat $repeat -At $at -JobDir (Join-Path $AppDir 'schedules') -Execute $exe -ArgumentPrefix $prefix
+    } catch { Show-Message $_.Exception.Message 'Schedule' 'Error'; return }
+    Write-Log 'Schedule' "'$name': $repeat, first run $($at.ToString('yyyy-MM-dd HH:mm')), $($sel.Count) libraries, saved in $folder. Job file: $job"
+    Update-SpScheduleList
+}
+
+function Show-SpSchedule {
+    <# Create a scheduled export from the ticked libraries; list, run or delete the existing ones. #>
+    $d = New-Object Windows.Forms.Form
+    $d.Text = 'Scheduled exports'
+    $d.Size = New-Object Drawing.Size(980, 480)
+    $d.StartPosition = 'CenterParent'
+    $d.BackColor = $ColorDark; $d.ForeColor = $ColorWhite; $d.Font = $form.Font
+    $g = New-Object Windows.Forms.TableLayoutPanel
+    $g.Dock = 'Fill'; $g.ColumnCount = 1; $g.RowCount = 5
+    $g.Padding = New-Object Windows.Forms.Padding(8)
+    foreach ($st in @(@('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('Percent', 100), @('AutoSize', 0))) {
+        [void]$g.RowStyles.Add((New-Object Windows.Forms.RowStyle($st[0], $st[1])))
+    }
+    $d.Controls.Add($g)
+
+    $row = New-Flow $ColorPanel
+    $row.Controls.Add((New-Label 'Schedule name'))
+    $script:SchedName = New-TextBox '' 180
+    $row.Controls.Add($script:SchedName)
+    $row.Controls.Add((New-Label 'Repeat'))
+    $script:SchedRepeat = New-Object Windows.Forms.ComboBox
+    $script:SchedRepeat.DropDownStyle = 'DropDownList'; $script:SchedRepeat.Width = 90
+    $script:SchedRepeat.BackColor = $ColorField; $script:SchedRepeat.ForeColor = $ColorWhite; $script:SchedRepeat.FlatStyle = 'Flat'
+    $script:SchedRepeat.Margin = New-Object Windows.Forms.Padding(0, 6, 4, 4)
+    [void]$script:SchedRepeat.Items.AddRange([object[]]@('Once', 'Daily', 'Weekly'))
+    $script:SchedRepeat.SelectedIndex = 0
+    $row.Controls.Add($script:SchedRepeat)
+    $row.Controls.Add((New-Label 'First run'))
+    $script:SchedAt = New-Object Windows.Forms.DateTimePicker
+    $script:SchedAt.Format = 'Custom'; $script:SchedAt.CustomFormat = 'yyyy-MM-dd HH:mm'; $script:SchedAt.Width = 140
+    $script:SchedAt.Margin = New-Object Windows.Forms.Padding(0, 6, 4, 4)
+    $script:SchedAt.Value = (Get-Date).Date.AddDays(1).AddHours(20)
+    $row.Controls.Add($script:SchedAt)
+    $row.Controls.Add((New-Label 'Weekly repeats on the same weekday as the first run.'))
+    $g.Controls.Add($row, 0, 0)
+
+    $row = New-Flow $ColorPanel
+    $row.Controls.Add((New-Label 'Save in folder'))
+    $script:SchedFolder = New-TextBox ([Environment]::GetFolderPath('MyDocuments')) 520
+    $row.Controls.Add($script:SchedFolder)
+    $row.Controls.Add((New-Button 'Browse...' (Col '#444444') {
+        $pick = New-Object Windows.Forms.FolderBrowserDialog
+        $pick.SelectedPath = $script:SchedFolder.Text
+        if ($pick.ShowDialog($script:SchedForm) -eq 'OK') { $script:SchedFolder.Text = $pick.SelectedPath }
+    }))
+    $g.Controls.Add($row, 0, 1)
+
+    $row = New-Flow $ColorDark
+    $row.Controls.Add((New-Button 'Save schedule' $ColorOrange { Save-SpScheduleFromForm } -Bold -Fore ([Drawing.Color]::Black)))
+    $ticked = if ($script:SpLibs) { @($script:SpChecked | Where-Object { $_ }).Count } else { 0 }
+    $login = if ($script:SpSession -and $script:SpSession.Credential) { 'with the user and password you loaded with; the password is stored encrypted for your Windows login on this PC' } else { 'with your Windows login' }
+    $info = New-Label "Uses the $ticked libraries ticked now and the file name '$($script:SpFileName.Text)'. Runs $login, only while you are signed in (a locked screen is fine). An existing file is never overwritten."
+    $info.MaximumSize = New-Object Drawing.Size(780, 0)
+    $row.Controls.Add($info)
+    $g.Controls.Add($row, 0, 2)
+
+    $script:SchedList = New-Object Windows.Forms.ListView
+    $script:SchedList.Dock = 'Fill'; $script:SchedList.View = 'Details'; $script:SchedList.FullRowSelect = $true; $script:SchedList.MultiSelect = $false
+    $script:SchedList.HideSelection = $false
+    $script:SchedList.BackColor = $ColorField; $script:SchedList.ForeColor = $ColorWhite
+    foreach ($c in @(@('Name', 160), @('Repeat', 60), @('Next run', 110), @('Last run', 110), @('Last result', 170), @('Libraries', 60), @('File', 270))) {
+        [void]$script:SchedList.Columns.Add($c[0], $c[1])
+    }
+    $g.Controls.Add($script:SchedList, 0, 3)
+
+    $row = New-Flow $ColorDark
+    $row.Controls.Add((New-Button 'Run now' $ColorBlue {
+        $n = Get-SpScheduleSelected
+        if ($n) {
+            try { Start-SpSchedule $n; Start-Sleep -Milliseconds 800; Update-SpScheduleList } catch { Show-Message $_.Exception.Message 'Run now' 'Error' }
+        }
+    }))
+    $row.Controls.Add((New-Button 'Delete' (Col '#444444') {
+        $n = Get-SpScheduleSelected
+        if ($n -and [Windows.Forms.MessageBox]::Show($script:SchedForm, "Delete the schedule '$n'? Files it already saved are kept.", 'Scheduled exports', 'YesNo', 'Question') -eq 'Yes') {
+            try { Remove-SpSchedule $n (Join-Path $AppDir 'schedules'); Update-SpScheduleList } catch { Show-Message $_.Exception.Message 'Delete' 'Error' }
+        }
+    }))
+    $row.Controls.Add((New-Button 'Refresh' (Col '#444444') { Update-SpScheduleList }))
+    $row.Controls.Add((New-Button 'Open logs' (Col '#444444') {
+        $dir = Join-Path $AppDir 'logs'
+        [void][IO.Directory]::CreateDirectory($dir)
+        Start-Process -FilePath explorer.exe -ArgumentList "`"$dir`""
+    }))
+    $g.Controls.Add($row, 0, 4)
+
+    $script:SchedForm = $d
+    Update-SpScheduleList
+    [void]$d.ShowDialog($script:SpForm)
+    $d.Dispose()
+}
+
+function Start-SpCompare {
+    <# Combined export against a folder of per-library CSV scans (no database needed). #>
+    if (-not (Get-Module -ListAvailable ImportExcel)) { Show-ImportExcelHelp; return }
+    $dlg = New-Object Windows.Forms.OpenFileDialog
+    $dlg.Title = 'Compare: choose the combined SharePoint export'
+    $dlg.Filter = 'SharePoint export (*.xlsx;*.xlsm;*.csv)|*.xlsx;*.xlsm;*.csv|All files (*.*)|*.*'
+    if ($dlg.ShowDialog($form) -ne 'OK') { return }
+    $workbook = $dlg.FileName
+    $dir = [IO.Path]::GetDirectoryName($workbook)
+    $pick = New-Object Windows.Forms.FolderBrowserDialog
+    $pick.Description = 'Compare: choose the folder with the per-library CSV files (subfolders are included)'
+    $pick.ShowNewFolderButton = $false
+    $pick.SelectedPath = $dir
+    if ($pick.ShowDialog($form) -ne 'OK') { return }
+    $report = Join-Path $dir "sharepoint_compare_$(Get-Date -Format 'yyyyMMdd_HHmmss').xlsx"
+    Start-MhJob 'Compare' -NoConnection -Arg @{ Workbook = $workbook; Folder = $pick.SelectedPath; Report = $report } -Body {
+        param($Db, $Arg, $Log, $Status)
+        $progress = { param($n, $file) & $Status ('Compare: {0:N0} rows read ({1})...' -f $n, $file) }.GetNewClosure()
+        Compare-SpExport -WorkbookPath $Arg.Workbook -CsvFolder $Arg.Folder -ReportPath $Arg.Report -Log $Log -Progress $progress
+    } -OnDone {
+        param($r)
+        Show-Grid $r.View 'Compare by library'
+        $text = ("{0}`n`nIn both: {1:N0}`nMissing from workbook: {2:N0} content, {3:N0} system`nOnly in workbook: {4:N0}`n" +
+                 "Problems: {5:N0}`n`n{7}`n`nReport: {6}`n`nOpen the report now?") -f $r.Verdict, $r.in_both, $r.missing_content, $r.missing_system, $r.only_in_workbook, $r.problems, $r.Path, $r.ColumnResult
+        if (Confirm-Action $text 'Compare') { Start-Process -FilePath $r.Path }
     }
 }
 
@@ -692,6 +930,7 @@ $layout.Controls.Add($connBar, 0, 0)
 # Row 1: actions
 $toolbar = New-Flow $ColorDark
 $toolbar.Controls.Add((New-Button 'Export from SharePoint' (Col '#B35C00') { Show-SharePointExport }))
+$toolbar.Controls.Add((New-Button 'Compare with CSV folder' (Col '#8A6D1A') { Start-SpCompare }))
 $toolbar.Controls.Add((New-Button 'Upload CSV/XLSX' $ColorOrange { Start-Upload } -Bold -Fore ([Drawing.Color]::Black)))
 $toolbar.Controls.Add((New-Button 'Create / Sync Table' $ColorBlue { Start-Sync }))
 $toolbar.Controls.Add((New-Button 'Convert existing Metadata' (Col '#1A6B5A') { Start-Convert }))
@@ -738,9 +977,13 @@ $grid.RowTemplate.Height = 22
 $layout.Controls.Add($grid, 0, 3)
 
 # Row 4: status
+$statusRow = New-Flow $ColorDark
+$jobBar = New-JobBar
+$statusRow.Controls.Add($jobBar)
 $status = New-Label ''
 $status.Margin = New-Object Windows.Forms.Padding(4, 4, 4, 4)
-$layout.Controls.Add($status, 0, 4)
+$statusRow.Controls.Add($status)
+$layout.Controls.Add($statusRow, 0, 4)
 
 # Row 5: log
 $logBox = New-Object Windows.Forms.TextBox
@@ -759,9 +1002,11 @@ $timer.Add_Tick({
     $done = $script:Job -and $script:Job.Handle.IsCompleted
     $item = $null
     while ($Sync.Queue.TryDequeue([ref]$item)) {
-        if ($item[0] -eq 'log') { Write-Log $item[1] $item[2] } else { Set-Status $item[1] }
+        if ($item[0] -eq 'log') { Write-Log $item[1] $item[2] }
+        elseif ($null -ne $item[2]) { Update-JobBar $item[2] $item[1] }
+        else { Set-Status $item[1] }
     }
-    if ($done) { Complete-MhJob }
+    if ($done) { Complete-MhJob } else { Show-JobElapsed }
 })
 
 $form.Add_FormClosing({

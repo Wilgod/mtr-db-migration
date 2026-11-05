@@ -9,7 +9,7 @@ of a folder and, optionally, its subfolders and files, read through Windows Powe
             report.write(item)
 
 List mode, start(..., paths=[...]), reads only the listed folders / files.
-Backups: backup_start(find_backups(folder)) reads permission.ps1's .acl.bak files instead
+Backups: backup_start([file, ...]) reads permission.ps1's .acl.bak files instead
 of the folders (same output lines), so the ACL as it was before permission.ps1 can be reported.
 Paths longer than 260 characters are read through the \\\\?\\ prefix. Nothing is
 changed on disk: Get-Acl only reads.
@@ -199,14 +199,6 @@ foreach ($f in $list) {
 }
 Emit @{ k = 'done' }
 """
-
-
-def find_backups(folder):
-    """permission.ps1's ACL backup files (*.acl.bak) in `folder` and below, sorted (parents first)."""
-    found = []
-    for dirpath, _, names in os.walk(folder):
-        found += [os.path.join(dirpath, n) for n in names if n.lower().endswith(".acl.bak")]
-    return sorted(found, key=str.lower)
 
 
 def backup_start(files):

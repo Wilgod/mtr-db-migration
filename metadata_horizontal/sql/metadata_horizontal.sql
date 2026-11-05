@@ -1,4 +1,4 @@
--- Reference DDL for the default config.json (28 columns). The program creates/extends the
+-- Reference DDL for the default config.json (30 columns). The program creates/extends the
 -- table itself from config.json (Create / Sync Table); this file is for review / DBA use.
 -- In a DB that has the consolidation's "Sites" table, the program also adds "SiteId" + FK + trigger.
 
@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS public."MetadataHorizontal" (
     "FlagPadlock" varchar(4000),
     "FlagUnreachable" varchar(4000),
     "FileDescription" varchar(4000),
+    "GUID" varchar(4000),
+    "UniqueId" varchar(4000),
     "SourceFile" varchar(1000),
     "ImportedAt" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "UpdatedAt" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP

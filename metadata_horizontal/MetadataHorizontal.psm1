@@ -1,8 +1,8 @@
 <#
 Horizontal metadata (PowerShell version of metadata_horizontal.py + metadata_matrix.py).
 
-One row per file for a fixed, config-driven set of metadata keys, while every
-other key stays in the vertical "Metadata" table (one row per key). Same
+One row per file for a fixed, config-driven set of metadata keys. An upload saves
+only those keys; every other column in the file is ignored. Same
 config.json, same tables and same rules as the Python version; the database is
 reached through psql.exe instead of SQLAlchemy, Excel files are read with the
 ImportExcel module (EPPlus) instead of openpyxl.
@@ -14,9 +14,9 @@ Upload (CSV or XLSX) - Import-MhFile:
                    OriginalSharePointPath). Folder rows (FSObjType=1) and old
                    versions are skipped; unmatched rows go to a report CSV.
     configured keys  ->  1 row in the horizontal table (upsert by FileId)
-    other keys       ->  vertical "Metadata" rows (non-empty values only)
-    For every matched file the old Metadata rows of all keys present in the file
-    (horizontal + vertical) are replaced, so a re-upload never duplicates.
+    other columns    ->  ignored, stored nowhere
+    For every matched file the old Metadata rows of the configured keys present
+    in the file are deleted, so a key is not kept in both tables.
     One transaction per upload: it either fully applies or not at all.
 
 Existing data - Convert-MhExisting:
@@ -57,6 +57,15 @@ $script:MatrixMarker       = 'Metadata matrix:'    # start of the table comment;
 $script:ModulesDir = Join-Path $script:AppDir 'modules'
 if ((Test-Path -LiteralPath $script:ModulesDir) -and ($env:PSModulePath -split ';') -notcontains $script:ModulesDir) {
     $env:PSModulePath = $script:ModulesDir + ';' + $env:PSModulePath
+}
+# files unzipped from a downloaded / copied zip carry the internet zone mark (Zone.Identifier);
+# .NET then refuses to load EPPlus.dll ("Operation is not supported", 0x80131515): unblock them
+foreach ($d in $script:ModulesDir, (Join-Path $script:AppDir 'psql')) {
+    if (Test-Path -LiteralPath $d) {
+        Get-ChildItem -LiteralPath $d -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { Get-Item -LiteralPath $_.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue } |
+            ForEach-Object { try { Unblock-File -LiteralPath $_.FullName -ErrorAction Stop } catch { } }
+    }
 }
 Add-Type -AssemblyName System.Web, Microsoft.VisualBasic
 
@@ -131,7 +140,6 @@ function Get-MhSettings($AppConfig) {
         MaxLen      = [int](Get-MhProp $sec 'ColumnMaxLength' 4000)
         CurrentOnly = [bool](Get-MhProp $sec 'CurrentVersionOnly' $true)
         RemoveMoved = [bool](Get-MhProp $sec 'RemoveMovedKeysFromMetadata' $true)
-        Skip        = New-OrdinalSet
         KeyByLower  = New-Object 'Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
     }
     if (-not $s.Table) { $s.Table = $script:DefaultTable }
@@ -145,9 +153,6 @@ function Get-MhSettings($AppConfig) {
             else { $s.Cols.Add(''); $errs.Add("Column name '$($p.Value)' (key $($p.Name)) must be letters/digits/_ and at most 63 chars") }
         }
     }
-    $skip = Get-MhProp $AppConfig 'SkipColumns'
-    if ($null -eq $skip) { $skip = Get-MhProp (Get-MhProp $AppConfig 'Data') 'SkipColumns' @() }
-    foreach ($k in $skip) { [void]$s.Skip.Add(([string]$k).ToLowerInvariant()) }
 
     if ($s.Table -notmatch $script:IdentRe) { $errs.Add("TableName '$($s.Table)' must be letters/digits/_ and at most 63 chars") }
     if ($s.Keys.Count -eq 0) { $errs.Add('HorizontalMetadata.Columns is empty') }
@@ -411,6 +416,17 @@ function Open-MhReader([string] $Path, [string] $Sheet) {
     $stream = New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
     try {
         if ($ext -eq '.xlsx' -or $ext -eq '.xlsm') {
+            # a big sheet is read row by row: EPPlus would load all of it, and it cannot open one near 2 GB
+            if ((Get-Command Test-SpBigXlsx -ErrorAction SilentlyContinue) -and (Test-SpBigXlsx $Path)) {
+                $stream.Dispose()
+                $reader = Open-SpSheetReader $Path $Sheet
+                try {
+                    $first = $reader.ReadRow(0)
+                    if ($null -eq $first) { throw "Sheet '$($reader.SheetName)' is empty" }
+                } catch { $reader.Dispose(); throw }
+                return @{ Kind = 'xlsxrows'; Reader = $reader; Sheet = $reader.SheetName; ColCount = $first.Length
+                          Headers = @($first | ForEach-Object { $_.Trim() }) }
+            }
             if (-not (Get-Module ImportExcel)) {
                 if (-not (Get-Module -ListAvailable ImportExcel)) {
                     throw ('Excel files need the ImportExcel PowerShell module. Install it once with ' +
@@ -482,6 +498,11 @@ function Read-MhXlsxBlockRow([hashtable] $R, [switch] $KeepEmpty) {
 }
 
 function Read-MhRow([hashtable] $R) {
+    if ($R.Kind -eq 'xlsxrows') {
+        $v = $R.Reader.ReadRow($R.ColCount)
+        if ($null -eq $v) { return $null }
+        return , $v
+    }
     if ($R.Kind -eq 'xlsx') {
         $v = Read-MhXlsxBlockRow $R
         if ($null -eq $v) { return $null }
@@ -502,6 +523,7 @@ function Read-MhRow([hashtable] $R) {
 }
 
 function Close-MhReader([hashtable] $R) {
+    if ($R.Reader) { $R.Reader.Dispose() }
     if ($R.Package) { $R.Package.Dispose() }
     if ($R.Parser) { $R.Parser.Dispose() }
     if ($R.Stream) { $R.Stream.Dispose() }
@@ -528,10 +550,9 @@ function Read-MhCsvText([string] $Text) {
 # ---------------------------------------------------------------------------
 
 function Get-MhHeaderPlan([string[]] $Headers, [hashtable] $S) {
-    <# -> Horiz {idx: key}, Vert {idx: header}, Skipped [header], Ids {name: idx} #>
+    <# -> Horiz {idx: key}, Skipped [header], Ids {name: idx}. Only Horiz columns are stored. #>
     $plan = @{
         Horiz   = New-Object 'Collections.Generic.Dictionary[int,string]'
-        Vert    = New-Object 'Collections.Generic.Dictionary[int,string]'
         Skipped = New-Object 'Collections.Generic.List[string]'
         Ids     = @{}
     }
@@ -544,8 +565,7 @@ function Get-MhHeaderPlan([string[]] $Headers, [hashtable] $S) {
         if ($idName -and -not $plan.Ids.ContainsKey($idName)) { $plan.Ids[$idName] = $i }
         $key = $null
         if ($S.KeyByLower.TryGetValue($lower, [ref]$key)) { $plan.Horiz[$i] = $key }
-        elseif ($S.Skip.Contains($lower) -or $idName) { $plan.Skipped.Add($h) }
-        else { $plan.Vert[$i] = cut $h 256 }
+        else { $plan.Skipped.Add($h) }
     }
     return $plan
 }
@@ -567,7 +587,7 @@ function Import-MhFile {
                    'FileId, UniqueId, FileRef, OriginalSharePointPath')
         }
         & $Log ("$name$(if ($reader.Sheet) { " [$($reader.Sheet)]" }): $($headers.Count) columns -> $($plan.Horiz.Count) horizontal, " +
-                "$($plan.Vert.Count) vertical, $($plan.Skipped.Count) skipped/identity")
+                "$($plan.Skipped.Count) ignored/identity")
         $inFile = New-OrdinalSet
         foreach ($k in $plan.Horiz.Values) { [void]$inFile.Add($k) }
         $missing = @($S.Keys | Where-Object { -not $inFile.Contains($_) } | Sort-Object)
@@ -575,7 +595,7 @@ function Import-MhFile {
 
         Initialize-MhTable $Conn $S -Log { param($m) } | Out-Null
         $stats = [ordered]@{ rows_read = 0; folders_skipped = 0; versions_skipped = 0; staged = 0; matched = 0
-                             unmatched = 0; horizontal_rows = 0; vertical_rows = 0; vertical_deleted = 0; duplicates = 0 }
+                             unmatched = 0; horizontal_rows = 0; vertical_deleted = 0; duplicates = 0 }
 
         $iFileId = if ($ids.ContainsKey('FileId')) { $ids['FileId'] } else { -1 }
         $iUid = if ($ids.ContainsKey('UniqueId')) { $ids['UniqueId'] } else { -1 }
@@ -584,7 +604,6 @@ function Import-MhFile {
         $iFs = if ($ids.ContainsKey('FSObjType')) { $ids['FSObjType'] } else { -1 }
         $iVl = if ($ids.ContainsKey('VersionLabel')) { $ids['VersionLabel'] } else { -1 }
         $hIdx = @($plan.Horiz.Keys); $hKeyJ = @($hIdx | ForEach-Object { jstr $plan.Horiz[$_] })
-        $vIdx = @($plan.Vert.Keys);  $vKeyJ = @($vIdx | ForEach-Object { jstr $plan.Vert[$_] })
         $maxLen = $S.MaxLen
         $currentOnly = $S.CurrentOnly
 
@@ -598,12 +617,11 @@ CREATE TEMP TABLE mh_stage (
     file_ref    text,
     orig_path   text,
     h           jsonb,
-    v           jsonb,
     file_id     integer,
     matched_by  text
 ) ON COMMIT DROP;
 -- FORCE_NOT_NULL: empty identity fields stay '' (not NULL) so the match rules work
-COPY mh_stage (row_no, file_id_in, unique_id, file_ref, orig_path, h, v) FROM STDIN
+COPY mh_stage (row_no, file_id_in, unique_id, file_ref, orig_path, h) FROM STDIN
     WITH (FORMAT csv, FORCE_NOT_NULL (file_id_in, unique_id, file_ref, orig_path));
 '@
         $tail = Get-MhUploadSql $S $plan $headers $name
@@ -630,23 +648,13 @@ COPY mh_stage (row_no, file_id_in, unique_id, file_ref, orig_path, h, v) FROM ST
                                  $(if ($iPath -ge 0 -and $iPath -lt $n) { $r[$iPath].Trim() } else { '' }))) {
                     [void]$line.Append($x.Replace('"', '""')).Append('","')
                 }
-                # h: every configured key in the file ('' -> NULL later); v: non-empty values only
+                # h: every configured key in the file ('' -> NULL later)
                 $json = New-Object Text.StringBuilder '{'
                 for ($k = 0; $k -lt $hIdx.Count; $k++) {
                     $i = $hIdx[$k]
                     $val = if ($i -lt $n) { cut $r[$i] $maxLen } else { '' }
                     if ($k) { [void]$json.Append(',') }
                     [void]$json.Append($hKeyJ[$k]).Append(':"').Append([System.Web.HttpUtility]::JavaScriptStringEncode($val)).Append('"')
-                }
-                [void]$line.Append($json.Append('}').ToString().Replace('"', '""')).Append('","')
-                [void]$json.Clear().Append('{')
-                $first = $true
-                for ($k = 0; $k -lt $vIdx.Count; $k++) {
-                    $i = $vIdx[$k]
-                    if ($i -ge $n -or $r[$i] -eq '') { continue }
-                    if (-not $first) { [void]$json.Append(',') }
-                    $first = $false
-                    [void]$json.Append($vKeyJ[$k]).Append(':"').Append([System.Web.HttpUtility]::JavaScriptStringEncode((cut $r[$i] 4000))).Append('"')
                 }
                 [void]$line.Append($json.Append('}').ToString().Replace('"', '""')).Append('"')
                 $w.Write($line.ToString()); $w.Write("`n")
@@ -686,13 +694,13 @@ COPY mh_stage (row_no, file_id_in, unique_id, file_ref, orig_path, h, v) FROM ST
         & $Log "Unmatched rows written to $rpt"
     }
     $stats.seconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
-    & $Log ("Done: $(fmt $stats.horizontal_rows) horizontal rows upserted, $(fmt $stats.vertical_rows) vertical " +
-            "Metadata rows written ($(fmt $stats.vertical_deleted) old rows replaced)  [$(secs $sw)s]")
+    & $Log ("Done: $(fmt $stats.horizontal_rows) horizontal rows upserted, " +
+            "$(fmt $stats.vertical_deleted) old Metadata rows of those keys removed  [$(secs $sw)s]")
     return $stats
 }
 
 function Get-MhUploadSql([hashtable] $S, [hashtable] $Plan, [string[]] $Headers, [string] $SourceName) {
-    <# SQL after the staged rows: match, upsert, replace vertical keys, report. Ends with COMMIT. #>
+    <# SQL after the staged rows: match, upsert, remove the keys from Metadata, report. Ends with COMMIT. #>
     $t = q $S.Table
     $sb = New-Object Text.StringBuilder
     # ---- match rows to Files -------------------------------------------------
@@ -750,11 +758,10 @@ WITH x AS (
 SELECT 'STAT|horizontal_rows|' || count(*) FROM x;
 "@)
     }
-    # ---- vertical: replace keys present in this file, insert the rest ---------
+    # ---- Metadata: remove the configured keys present in this file -------------
     # exact spellings: config keys, plus the file's own header text for them
     $keys = New-OrdinalSet
     foreach ($i in $Plan.Horiz.Keys) { [void]$keys.Add($Plan.Horiz[$i]); [void]$keys.Add($Headers[$i]) }
-    foreach ($k in $Plan.Vert.Values) { [void]$keys.Add($k) }
     if ($keys.Count) {
         $arr = 'ARRAY[' + (($keys | Sort-Object | ForEach-Object { lit $_ }) -join ', ') + ']::text[]'
         [void]$sb.AppendLine(@"
@@ -764,19 +771,6 @@ WITH x AS (
     RETURNING 1)
 SELECT 'STAT|vertical_deleted|' || count(*) FROM x;
 "@)
-    }
-    if ($Plan.Vert.Count) {
-        [void]$sb.AppendLine(@'
-WITH x AS (
-    INSERT INTO public."Metadata" ("FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName")
-    SELECT s.file_id, e.key, e.value, 'String', f."SiteName"
-    FROM mh_stage s
-    JOIN public."Files" f ON f."FileId" = s.file_id
-    CROSS JOIN LATERAL jsonb_each_text(s.v) e
-    WHERE e.value <> ''
-    RETURNING 1)
-SELECT 'STAT|vertical_rows|' || count(*) FROM x;
-'@)
     }
     # ---- unmatched report (last output: everything after #REPORT is CSV) --------
     [void]$sb.AppendLine(@'
