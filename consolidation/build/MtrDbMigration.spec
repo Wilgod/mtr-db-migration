@@ -3,9 +3,9 @@
 
 a = Analysis(
     ['C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\migrate_app.py'],
-    pathex=['C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation', 'C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\..\\metadata_horizontal'],
+    pathex=['C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation', 'C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\..\\metadata_horizontal', 'C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\..'],
     binaries=[],
-    datas=[('C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\sql', 'consolidation\\sql'), ('C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\sources.json', 'consolidation'), ('C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\build\\pgbin', 'pgbin')],
+    datas=[('C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\..\\metadata_horizontal\\config.json', 'metadata_horizontal'), ('C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\sql', 'consolidation\\sql'), ('C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\sources.json', 'consolidation'), ('C:\\Users\\wilso\\webpart\\MTR\\mtr-db-migration\\consolidation\\build\\pgbin', 'pgbin')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

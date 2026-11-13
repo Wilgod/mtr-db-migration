@@ -9,7 +9,9 @@ exe by build_exe.ps1. Two steps:
           report, ID ranges, Sites, indexes/keys/triggers. No rows are copied.
   Step 2  Copy data: pick tables and source databases and copy their rows. Repeatable,
           so the sources can go one at a time (plan_copy has the rules); ticking what
-          is already copied reloads it. "Build Metadata Matrix" then makes MetadataMatrix: one row
+          is already copied reloads it. The list shows the disk space the ticked tables
+          should need and what the server has free (estimate_space, Runner.free_space).
+          "Build Metadata Matrix" then makes MetadataMatrix: one row
           per file, one column per distinct MetadataKey (Metadata unchanged).
           Double-clicking a table lists its columns and indexes; tick columns there
           to add an index on them.
@@ -26,6 +28,12 @@ folders" puts such a report (edited in Excel if needed) back: every path in it g
 exactly the entries listed for it (Preview first shows what would change).
 "Backup (.acl.bak) to Excel" writes the same report from the chosen ACL backups of permission.ps1
 (the permissions as they were before it ran), so Apply can also restore them.
+
+The "Upload metadata" tab loads a folder of upload files (.xlsx / .csv) (build_upload_csv.py output, e.g.
+compareDanielUpload) into a new wide "Metadata_Extend" table (one column per CSV header + "Source" =
+the CSV's path); the original Metadata table is not touched. "Metadata_Extend_Upload" records
+each CSV (done / error / stopped), so a run skips what is done and resumes at the file that
+failed (metadata_upload.py).
 
 The exe carries everything it needs: generate.py, sql/ and a private copy of
 psql.exe + DLLs. Only the source database names are needed: each source's
@@ -49,6 +57,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 import zlib
 from datetime import datetime
@@ -56,7 +65,9 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import acl_check
 import generate
+import metadata_upload
 import schema_compare
+import upload_prep
 
 # metadata_matrix.py lives with the Metadata Horizontal tool (bundled into the exe)
 sys.path.insert(1, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "metadata_horizontal"))
@@ -70,6 +81,11 @@ APP_DIR = os.path.dirname(sys.executable) if FROZEN else os.path.dirname(os.path
 RES_CONS = os.path.join(BUNDLE, "consolidation") if FROZEN else APP_DIR
 RES_DUMPS = os.path.join(BUNDLE, "pgdump_schema") if FROZEN else os.path.join(APP_DIR, "..", "pgdump_schema")
 RES_PGBIN = os.path.join(BUNDLE, "pgbin")
+# metadata_horizontal\config.json: its columns are the header of the upload CSVs ("Build upload files")
+MH_CONFIGS = [os.path.join(APP_DIR, "config.json"),
+              os.path.join(APP_DIR, "..", "metadata_horizontal", "config.json"),
+              os.path.join(APP_DIR, "..", "..", "metadata_horizontal", "config.json"),
+              os.path.join(BUNDLE, "metadata_horizontal", "config.json")]
 
 SOURCES_FILE = os.path.join(APP_DIR, "sources.json")
 SETTINGS_FILE = os.path.join(APP_DIR, "migrate_settings.json")
@@ -130,13 +146,22 @@ BEGIN
              WHERE oid <> ALL (sys_ns) AND nspname <> 'public' AND oid <> ALL (ext_objs) LOOP
     EXECUTE st;
   END LOOP;
+  -- tables and views first: their identity / serial sequences go with them
   FOR st IN SELECT format('DROP %s IF EXISTS %I.%I CASCADE',
                           CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW'
-                                         WHEN 'f' THEN 'FOREIGN TABLE' WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END,
+                                         WHEN 'f' THEN 'FOREIGN TABLE' ELSE 'TABLE' END,
                           n.nspname, c.relname)
               FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.relnamespace <> ALL (sys_ns) AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+             WHERE c.relnamespace <> ALL (sys_ns) AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
                AND c.oid <> ALL (ext_objs) LOOP
+    EXECUTE st;
+  END LOOP;
+  -- then the sequences left over; an identity column's sequence can't be dropped on its own
+  FOR st IN SELECT format('DROP SEQUENCE IF EXISTS %I.%I CASCADE', n.nspname, c.relname)
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relnamespace <> ALL (sys_ns) AND c.relkind = 'S' AND c.oid <> ALL (ext_objs)
+               AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass
+                               AND d.objid = c.oid AND d.deptype = 'i') LOOP
     EXECUTE st;
   END LOOP;
   FOR st IN SELECT format('DROP ROUTINE IF EXISTS %s CASCADE', p.oid::regprocedure) FROM pg_proc p
@@ -196,12 +221,42 @@ WHERE i.indrelid = to_regclass(format('public.%I', '{t}'))"""
 SOURCE_TABLES_QUERY = """SELECT c.relname, c.reltuples::bigint FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
 WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition"""
+# Disk used per table in a source, indexes and TOAST included (a partitioned parent holds nothing itself).
+SOURCE_SIZES_QUERY = """SELECT c.relname, COALESCE(CASE c.relkind WHEN 'p' THEN
+    (SELECT SUM(pg_total_relation_size(relid))::bigint FROM pg_partition_tree(c.oid))
+    ELSE pg_total_relation_size(c.oid) END, 0)
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition"""
+# data_directory is empty for a login that may not read it (reading it anyway is an error).
+DISK_INFO_QUERY = """SELECT pg_size_bytes(current_setting('max_wal_size')),
+    (SELECT count(*) FROM pg_replication_slots WHERE NOT active),
+    CASE WHEN pg_has_role(current_user, 'pg_read_all_settings', 'USAGE') THEN current_setting('data_directory') ELSE '' END,
+    pg_tablespace_location(dattablespace)
+FROM pg_database WHERE datname = current_database()"""
+SPACE_MARGIN = 0.25  # the target's indexes differ from the source's: 17% more in a test copy of Files
 # How many source links (direct) / staging copies (through this PC) are still there.
 LINKS_DIRECT = "SELECT count(*) FROM pg_foreign_server WHERE srvname LIKE 'srv\\_%'"
 LINKS_STAGING = "SELECT count(*) FROM _merge.stage WHERE to_regclass(format('public.%I', stage_table)) IS NOT NULL"
 # Which layout an existing target was built with.
 LAYOUT_QUERY = ("SELECT CASE WHEN to_regclass('public._merge_source') IS NOT NULL THEN 'staging' "
                 "WHEN to_regclass('_merge.source') IS NOT NULL THEN 'direct' ELSE '' END")
+
+
+def restore_space_sql(tables):
+    """Bytes the skipped duplicates will take once restored: for each table, its size now times
+    (skipped parent rows from the sources it was copied from / parent rows loaded), plus a
+    rewrite of the conflict-log rows that get marked."""
+    parent = {t: generate.SKIP_CASCADE[t][0][0] for t in tables}
+    parts = [f"SELECT pg_total_relation_size('public.{generate.q(t)}')::numeric\n"
+             f"     * (SELECT count(*) FROM _merge.conflict_log c JOIN _merge.loaded_source l\n"
+             f"          ON l.table_name = {generate.lit(t)} AND l.source_db = c.source_db\n"
+             f"        WHERE c.action = 'skipped' AND c.table_name = {generate.lit(p)})\n"
+             f"     / GREATEST((SELECT reltuples FROM pg_class WHERE oid = 'public.{generate.q(p)}'::regclass), 1) AS b"
+             for t, p in parent.items()]
+    parts.append("SELECT pg_total_relation_size('_merge.conflict_log')::numeric\n"
+                 "     * (SELECT count(*) FROM _merge.conflict_log WHERE action = 'skipped')\n"
+                 "     / GREATEST((SELECT count(*) FROM _merge.conflict_log), 1)")
+    return "SELECT COALESCE(sum(b), 0)::bigint FROM (\n" + "\nUNION ALL\n".join(parts) + "\n) x"
 
 
 def find_psql():
@@ -236,6 +291,46 @@ def tick_tables(kept, table, tick, present):
             change.add(t)
             todo += needs[t] if tick else [c for c in present if t in needs[c]]
     return set(kept) | change if tick else set(kept) - change
+
+
+def fmt_size(n):
+    """1536 -> '1.5 KB'."""
+    n = float(n)
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "bytes" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.2f} TB"
+
+
+def parse_df(text):
+    """The available bytes of each disk in `df -Pk` output."""
+    free = []
+    for line in text.splitlines():
+        f = line.split()
+        # from the end: a file system name can hold spaces. ... blocks used available use% mount
+        for i in range(len(f) - 1, 2, -1):
+            if f[i].endswith("%") and f[i - 1].isdigit():
+                free.append(int(f[i - 1]) * 1024)
+                break
+    return free
+
+
+def estimate_space(copies, sizes, wal):
+    """Rough disk need of `copies` {table: [source]} (plan_copy), from `sizes` {source: {table: bytes}}:
+    the size of those tables in the sources, a margin, and room for WAL (`wal`: max_wal_size).
+    A reloaded table's old rows are not counted as free: they stay on disk until the first commit.
+    Returns {"data", "margin", "wal", "need", "unknown": [(table, source)] with no size}."""
+    data, unknown = 0, []
+    for t, srcs in copies.items():
+        for s in srcs:
+            size = sizes.get(s, {}).get(t)
+            if size is None:
+                unknown.append((t, s))
+            else:
+                data += size
+    margin = int(data * SPACE_MARGIN)
+    return {"data": data, "margin": margin, "wal": wal, "need": data + margin + wal, "unknown": unknown}
 
 
 class StepFailed(Exception):
@@ -366,6 +461,81 @@ class Runner:
                     t["rows"] += int(rows)
         return tables, len(never)
 
+    def source_sizes(self, sources):
+        """({source name: {table: bytes}}, {source name: why it could not be read})."""
+        sizes, errors = {}, {}
+        for s in sources:
+            cmd, env = self.source_cmd(s)
+            try:
+                r = subprocess.run(cmd + ["-X", "-w", "-q", "-tA", "-F", "\t", "-v", "ON_ERROR_STOP=1",
+                                          "-c", SOURCE_SIZES_QUERY],
+                                   env=env, creationflags=NO_WINDOW, stdin=subprocess.DEVNULL, capture_output=True)
+            except OSError as e:
+                errors[s["name"]] = str(e)
+                continue
+            if r.returncode != 0:
+                errors[s["name"]] = r.stderr.decode("utf-8", errors="replace").strip()
+                continue
+            sizes[s["name"]] = {}
+            for line in r.stdout.decode("utf-8", errors="replace").splitlines():
+                if line.strip():
+                    name, size = line.rstrip("\r").split("\t")
+                    sizes[s["name"]][name] = int(size)
+        return sizes, errors
+
+    def free_space(self, target):
+        """{"free": bytes on the fullest of the target's data and WAL disks, or None with "why",
+        "how", "wal": max_wal_size, "idle_slots": inactive replication slots}. PostgreSQL has no SQL
+        for this, so it asks the disk: from this PC when the server is here, through docker, else
+        by running one read-only command on the server (needs superuser or pg_execute_server_program)."""
+        info = {"free": None, "how": "", "why": "", "wal": 1 << 30, "idle_slots": 0}
+        try:
+            wal, idle, data_dir, space = self.psql_scalar(target, DISK_INFO_QUERY, extra=("-F", "\t")).split("\t")
+        except (StepFailed, OSError, ValueError) as e:
+            info["why"] = str(e).splitlines()[0] if str(e) else "could not ask the server"
+            return info
+        info["wal"], info["idle_slots"] = int(wal), int(idle)
+        if not data_dir:
+            info["why"] = "this login may not read the server's data folder (needs pg_read_all_settings)"
+            return info
+        paths = [space or data_dir, data_dir.rstrip("/\\") + "/pg_wal"]
+        c = self.cfg
+        try:
+            if c["docker"]:
+                r = subprocess.run(["docker", "exec", c["docker"], "df", "-Pk", *paths], creationflags=NO_WINDOW,
+                                   stdin=subprocess.DEVNULL, capture_output=True)
+                if r.returncode != 0:
+                    raise StepFailed(r.stderr.decode("utf-8", errors="replace").strip())
+                free, how = parse_df(r.stdout.decode("utf-8", errors="replace")), "df in the docker container"
+            elif c["host"] in generate.LOCAL_HOSTS and all(os.path.exists(p) for p in paths):
+                free, how = [shutil.disk_usage(p).free for p in paths], "this PC's disk"
+            else:
+                free, how = self._server_free(target, paths), "a read-only command on the server"
+        except (StepFailed, OSError, ValueError) as e:
+            info["why"] = str(e).splitlines()[0] if str(e) else "could not read the disk"
+            return info
+        if not free:
+            info["why"] = "the server's disk command gave no answer"
+            return info
+        info["free"], info["how"] = min(free), how
+        return info
+
+    def _server_free(self, target, paths):
+        """Free bytes per disk, by COPY ... FROM PROGRAM into a temporary table that is dropped again."""
+        if paths[0][1:2] == ":":  # a Windows server
+            drives = ",".join(sorted({f"'{p[0]}'" for p in paths}))
+            program = (f'powershell -NoProfile -Command "{drives} | ForEach-Object '
+                       '{ ([IO.DriveInfo]$_).AvailableFreeSpace }"')
+            parse = lambda text: [int(x) for x in text.split()]  # noqa: E731
+        else:
+            program = "df -Pk " + " ".join("'" + p.replace("'", "'\\''") + "'" for p in paths)
+            parse = parse_df
+        sql = program.replace("'", "''")
+        out = self.psql_scalar(target, "BEGIN; CREATE TEMP TABLE _disk_free (line text) ON COMMIT DROP; "
+                                       f"COPY _disk_free FROM PROGRAM '{sql}'; "
+                                       "SELECT line FROM _disk_free; COMMIT;", extra=("-q",))
+        return parse(out)
+
     def layout(self, target):
         """'direct' (postgres_fdw + _merge schema), 'staging' (through this PC) or '' (not built)."""
         return self.psql_scalar(target, LAYOUT_QUERY)
@@ -398,13 +568,14 @@ class Runner:
             self.log("layout: " + ("through this PC (staging tables in public)" if staging
                                    else "direct (postgres_fdw links)"))
 
-    def stage_data(self, g, target):
-        """Through this PC: copy every source table into its staging table (generate.copy_to_stage)."""
+    def stage_data(self, g, target, only=None):
+        """Through this PC: copy every source table (or `only` these staging tables) into its
+        staging table (generate.copy_to_stage)."""
         def progress(i, n, s, t):
             self.out.put(("step", f"copy to staging {i}/{n}: {s['name']}.{t}"))
         try:
             counts = generate.copy_to_stage(g, self.source_cmd, lambda: (self._cmd(target, []), self.env),
-                                            log=self.log, progress=progress)
+                                            log=self.log, progress=progress, only=only)
         except RuntimeError as e:
             raise StepFailed(str(e))
         if counts:  # in a file: hundreds of tables would not fit on a command line
@@ -460,7 +631,11 @@ class Runner:
                           variables=[f"src_user={self.cfg['src_user']}", f"src_password={self.cfg['src_password']}",
                                      f"src_kerberos={'true' if self.cfg['src_kerberos'] else 'false'}"])
         self.section("preflight")
-        self.psql_run(target, "preflight", file=self.sql("02_preflight.sql"))
+        try:
+            # a read-only report: a failure (e.g. no room for its temp files) must not stop step 1
+            self.psql_run(target, "preflight", file=self.sql("02_preflight.sql"))
+        except StepFailed as e:
+            self.log(f"WARNING: preflight report failed ({e}); continuing. Check free disk space on the target.")
         self.section("prepare")
         self.psql_run(target, "prepare", file=self.sql("03_prepare.sql"))
         self.section("finalize")
@@ -496,13 +671,9 @@ class Runner:
 
     def _sequences_and_verify(self, target, g, staging, holds):
         """`holds`: {table: sources} to reconcile against the sources."""
-        verify_file = self.sql(f"verify_{self.stamp}.sql")
-        with open(verify_file, "w", encoding="utf-8", newline="\n") as f:
-            f.write(self.m(g.verify(holds), staging))
         self.section("sequences")
         self.psql_run(target, "sequences", file=self.sql("04b_sequences.sql"))
-        self.section("verify")
-        self.psql_run(target, "verify", file=verify_file)
+        self._verify(target, g, staging, holds)
 
     def recheck(self):
         """The end of step 2 again, for all that is copied: reset the sequences, reconcile every
@@ -514,7 +685,22 @@ class Runner:
         holds = {t: v for t, v in holds.items() if v}
         if not holds:
             raise StepFailed("Nothing has been copied yet, so there is nothing to re-check.")
-        self._sequences_and_verify(target, g, staging, holds)
+        if not staging:
+            self._sequences_and_verify(target, g, staging, holds)
+        else:
+            # staging copies are emptied after each copy: fill, check and empty them one source at a time
+            self.section("sequences")
+            self.psql_run(target, "sequences", file=self.sql("04b_sequences.sql"))
+            present = set(self.psql_scalar(target, "SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+                          .splitlines())
+            for s in g.sources:
+                tables = [t for t, srcs in holds.items() if s["name"] in srcs]
+                names = {generate.stage_table(s["name"], t) for t in tables} & present
+                if not names:
+                    continue
+                self._fill_stage(g, target, names)
+                self._verify(target, g, staging, {t: [s["name"]] for t in tables}, f"verify {s['name']}")
+                self._free_stage(target, names)
         self.log(f"\nRe-check done: sequences reset, {len(holds)} table(s) match their sources.")
 
     def step2(self, copies, reload, holds):
@@ -527,9 +713,24 @@ class Runner:
             with open(path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(self.m(ADD_LOADED_SOURCE_SQL, staging))
             self.psql_run(target, "add_loaded_source", file=path, extra_args=["-q", "--single-transaction"])
+        present = set(self.psql_scalar(target, "SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+                      .splitlines()) if staging else set()
         batches = g.load_batches(copies, set(reload))
         done = []
         for i, (source, sql) in enumerate(batches, 1):
+            tables = [t for t, srcs in copies.items() if source in srcs]
+            # Through this PC: one source's staging copies at a time. They are filled (again) just
+            # before its copy and emptied once it is committed and verified, so the disk only ever
+            # holds the target plus the staging copies of the source being copied.
+            names = {generate.stage_table(source, t) for t in tables} & present
+            try:
+                if names:
+                    self._fill_stage(g, target, names)
+            except StepFailed as e:
+                self._after_failed_copy(target, done)
+                raise StepFailed(f"{e}\n\nCould not copy {source} to staging; nothing from {source} was copied. "
+                                 + (f"Committed and kept: {', '.join(done)}. " if done else "")
+                                 + "Fix the problem, then click Tick not loaded and Copy to carry on from there.")
             load_file = self.sql(f"load_{self.stamp}_{i}_{source}.sql")
             with open(load_file, "w", encoding="utf-8", newline="\n") as f:
                 f.write(self.m(sql, staging))
@@ -543,12 +744,53 @@ class Runner:
                                  + "Fix the problem, then click Tick not loaded and Copy to carry on from there.")
             done.append(source)
             self.log(f"{source}: committed ({i}/{len(batches)})")
+            if names:
+                try:
+                    self._verify(target, g, staging, {t: [source] for t in tables}, f"verify {source}")
+                except StepFailed as e:
+                    self._after_failed_copy(target, done)
+                    raise StepFailed(f"{e}\n\nThe rows of {source} are copied and committed, but they do not match "
+                                     f"its staging copies (kept for checking). Copies after {source} were not started. "
+                                     "Fix the problem, then click Re-check. Do not copy these tables again.")
+                self._free_stage(target, names)
         try:
-            self._sequences_and_verify(target, g, staging, holds)
+            if staging:
+                # each source was verified right after its copy, before its staging copies were emptied
+                self.section("sequences")
+                self.psql_run(target, "sequences", file=self.sql("04b_sequences.sql"))
+            else:
+                self._sequences_and_verify(target, g, staging, holds)
         except StepFailed as e:
             raise StepFailed(f"{e}\n\nThe rows are copied and committed; this last part did not finish. "
                              "Fix the problem, then click Re-check. Do not copy these tables again.")
         self.log(f"\nStep 2 done: {len(copies)} table(s) copied and verified.")
+
+    def _fill_stage(self, g, target, names):
+        """Fill the staging tables `names` (all existing) in full where they are empty (emptied
+        after their copy, or by a crash) or hold only skipped duplicates. Full ones are kept."""
+        emptied = self._emptied_stage(target, names)
+        partial = self._partial_stage(target, names) - emptied
+        if not (emptied or partial):
+            return
+        self.section("copy to staging (through this PC)")
+        if partial:
+            self.log("These staging copies hold only the skipped duplicates (from Insert skipped "
+                     "duplicates), so they are copied again in full:\n  " + ", ".join(sorted(partial)))
+        self._refill_stage(g, target, emptied | partial)
+
+    def _free_stage(self, target, names):
+        """Empty the staging tables `names` to give their disk space back. _merge.stage keeps
+        their row counts, so _emptied_stage sees them as emptied and the next use fills them again."""
+        self.psql_run(target, "free_staging", command="TRUNCATE " + ", ".join(
+            f"public.{generate.q(n)}" for n in sorted(names)))
+        self.log(f"staging copies emptied to free disk space: {len(names)} table(s)")
+
+    def _verify(self, target, g, staging, holds, label="verify"):
+        verify_file = self.sql(f"{label.replace(' ', '_')}_{self.stamp}.sql")
+        with open(verify_file, "w", encoding="utf-8", newline="\n") as f:
+            f.write(self.m(g.verify(holds), staging))
+        self.section(label)
+        self.psql_run(target, label.replace(" ", "_"), file=verify_file)
 
     def _after_failed_copy(self, target, done):
         """The sources already committed stay, so their sequences must still be moved past
@@ -586,6 +828,317 @@ class Runner:
         summary = json.loads(self.psql_scalar(target, metadata_matrix.summary_sql(table)))
         self.log(metadata_matrix.result_line(table, len(cols), summary, (datetime.now() - t0).total_seconds()))
         self.log("\nMetadata itself is unchanged.")
+
+    def _emptied_stage(self, target, names):
+        """The staging tables in `names` (all existing) that step 1 filled but that are empty now.
+        They are UNLOGGED, and PostgreSQL empties every unlogged table when the server restarts
+        after a crash (e.g. a full disk), so their rows are gone without any error."""
+        return self._stage_where(target, names, "g.row_count > 0 AND NOT EXISTS (SELECT 1 FROM public.{t})")
+
+    def _partial_stage(self, target, names):
+        """The staging tables in `names` that hold only the rows of skipped duplicates
+        (copied by Insert skipped duplicates), not the whole source table."""
+        return self._stage_where(target, names, "g.partial")
+
+    def _stage_where(self, target, names, cond):
+        if not names:
+            return set()
+        self._ensure_partial_flag(target)
+        parts = [f"SELECT {generate.lit(n)} FROM _merge.stage g WHERE g.stage_table = {generate.lit(n)} AND "
+                 + cond.format(t=generate.q(n)) for n in sorted(names)]
+        return set(self.psql_scalar(target, self.m("\nUNION ALL\n".join(parts), True)).splitlines()) - {""}
+
+    def _ensure_partial_flag(self, target):
+        self.psql_scalar(target, self.m("ALTER TABLE _merge.stage ADD COLUMN IF NOT EXISTS partial boolean "
+                                        "NOT NULL DEFAULT false", True))
+
+    def _refill_stage(self, g, target, names):
+        """Copy the staging tables `names` again from the sources, whole (emptied first)."""
+        self.psql_run(target, "restage_truncate", command="TRUNCATE " + ", ".join(
+            f"public.{generate.q(n)}" for n in sorted(names)))
+        self.stage_data(g, target, only=set(names))
+        self._ensure_partial_flag(target)
+        self.psql_scalar(target, self.m("UPDATE _merge.stage SET partial = false WHERE stage_table = ANY (ARRAY["
+                                        + ", ".join(generate.lit(n) for n in sorted(names)) + "])", True))
+
+    def _skipped_ids(self, target, parent, source):
+        """The old IDs (COPY text) of the rows of `parent` skipped in `source`."""
+        return self.psql_scalar(target, self.m(
+            f"COPY (SELECT DISTINCT old_id FROM _merge.conflict_log WHERE action = 'skipped' "
+            f"AND table_name = {generate.lit(parent)} AND source_db = {generate.lit(source)} ORDER BY 1) TO STDOUT",
+            True)).replace("\r\n", "\n")  # one line style: the ids are fed to COPY ... FROM STDIN
+
+    def _copy_skipped_to_stage(self, g, target, pairs):
+        """Fill the staging tables of `pairs` [(source, table)] with only the rows of the skipped
+        duplicates (by the skipped Files / MigrationTasks IDs), and flag them partial."""
+        names = {generate.stage_table(s["name"], t) for s, t in pairs}
+        self.psql_run(target, "restage_truncate", command="TRUNCATE " + ", ".join(
+            f"public.{generate.q(n)}" for n in sorted(names)))
+        ids, items = {}, []
+        for s, t in pairs:
+            parent, col = generate.SKIP_CASCADE[t][0]
+            if (s["name"], parent) not in ids:
+                ids[(s["name"], parent)] = self._skipped_ids(target, parent, s["name"])
+            items.append((s, t, col, ids[(s["name"], parent)]))
+
+        def progress(i, n, s, t):
+            self.out.put(("step", f"copy skipped rows to staging {i}/{n}: {s['name']}.{t}"))
+        try:
+            counts = generate.copy_ids_to_stage(g, self.source_cmd, lambda: (self._cmd(target, []), self.env),
+                                                items, log=self.log, progress=progress)
+        except RuntimeError as e:
+            raise StepFailed(str(e))
+        self._ensure_partial_flag(target)
+        self.psql_run(target, "stage_partial", command=self.m(
+            "UPDATE _merge.stage SET partial = true WHERE stage_table = ANY (ARRAY["
+            + ", ".join(generate.lit(n) for n in sorted(names)) + "]);\n"
+            "ANALYZE " + ", ".join(f"public.{generate.q(st)}" for st, _ in counts), True))
+
+    def verify_counts(self):
+        """Exact row count of every table in every source database (read live, so it works
+        after Finish too) next to the rows in the target tagged with that source. Read-only.
+        Writes the comparison to the log and to logs\\verify_counts_<time>.csv."""
+        target = self.cfg["target"]
+        layout = self.layout(target)
+        if not layout:
+            raise StepFailed(f"{target} is not prepared - run step 1 first.")
+        staging = layout == "staging"
+        g = self.generate(staging)
+        tag = {t: g.generic[t]["tag"] if t in g.generic else generate.SOURCE_TAG[t]
+               for t in generate.LOAD_ORDER + sorted(g.generic)}
+        # --- target: rows per table and source tag
+        self.section("count the target")
+        have = set(self.psql_scalar(target, "SELECT tablename FROM pg_tables WHERE schemaname = 'public'").splitlines())
+        parts = [f"SELECT {generate.lit(t)}, COALESCE({generate.q(c)}::text, ''), count(*) FROM public.{generate.q(t)} GROUP BY 2"
+                 for t, c in tag.items() if t in have]
+        loaded = {}
+        for line in self.psql_scalar(target, "\nUNION ALL\n".join(parts), extra=("-F", "\t")).splitlines():
+            if line.strip():
+                t, src, n = line.rstrip("\r").split("\t")
+                loaded[(t, src)] = int(n)
+        skipped = {}
+        for line in self.psql_scalar(target, self.m(
+                "SELECT table_name, source_db, count(*) FROM _merge.conflict_log WHERE action = 'skipped' GROUP BY 1, 2",
+                staging), extra=("-F", "\t")).splitlines():
+            if line.strip():
+                t, src, n = line.rstrip("\r").split("\t")
+                skipped[(t, src)] = int(n)
+        copied = {r[0]: {x for x in r[7].split(", ") if x} for r in self.plan()[1]}
+        # --- sources: exact counts, read live
+        rows = []
+        for i, s in enumerate(g.sources, 1):
+            self.section(f"count source {i}/{len(g.sources)}: {s['dbname']}")
+            self.out.put(("step", f"counting rows in {s['dbname']}"))
+            tables = sorted(t for t in s["tables"] if not generate.EXCLUDED.match(t))
+            if not tables:
+                continue
+            sql = "\nUNION ALL\n".join(f"SELECT {generate.lit(t)}, count(*) FROM public.{generate.q(t)}" for t in tables)
+            cmd, env = self.source_cmd(s)
+            r = subprocess.run(cmd + ["-X", "-w", "-q", "-tA", "-F", "\t", "-v", "ON_ERROR_STOP=1", "-c", sql],
+                               env=env, creationflags=NO_WINDOW, stdin=subprocess.DEVNULL, capture_output=True)
+            if r.returncode != 0:
+                raise StepFailed(f"{s['dbname']}: " + r.stderr.decode("utf-8", errors="replace").strip())
+            for line in r.stdout.decode("utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                t, n = line.rstrip("\r").split("\t")
+                n = int(n)
+                got = loaded.get((t, s["name"]), 0)
+                skip = skipped.get((t, s["name"]), 0)
+                if t in g.skip or t not in tag:
+                    status = "NOT MIGRATED (skipped table)"
+                elif s["name"] not in copied.get(t, ()):
+                    status = "OK (empty)" if n == 0 and got == 0 else "NOT COPIED YET"
+                elif got == n:
+                    status = "OK"
+                elif skip and got + skip == n:
+                    status = f"OK except {skip:,} skipped duplicates"
+                elif any(k[1] == s["name"] and v for k, v in skipped.items()):
+                    status = "DIFFERENT (rows of skipped duplicate files?)"
+                else:
+                    status = "DIFFERENT"
+                rows.append((t, s["name"], n, got, n - got, status))
+        # rows the app wrote after the merge (no source tag)
+        app_rows = {t: n for (t, src), n in loaded.items() if src == ""}
+        # --- report
+        self.section("row counts: source database vs migrated")
+        head = ("table", "source_db", "source_rows", "migrated_rows", "difference", "status")
+        w = [max(len(head[0]), *(len(r[0]) for r in rows)) if rows else 10,
+             max(len(head[1]), *(len(r[1]) for r in rows)) if rows else 10, 12, 13, 10]
+        self.log(f"{head[0]:<{w[0]}}  {head[1]:<{w[1]}}  {head[2]:>{w[2]}}  {head[3]:>{w[3]}}  {head[4]:>{w[4]}}  {head[5]}")
+        self.log("-" * (sum(w) + 40))
+        order = {"DIFFERENT": 0, "NOT COPIED YET": 1}
+        rows.sort(key=lambda r: (min((v for k, v in order.items() if r[5].startswith(k)), default=2), r[0], r[1]))
+        empty = sum(1 for r in rows if r[2] == 0 and r[3] == 0)
+        for t, src, n, got, diff, status in rows:
+            if n == 0 and got == 0:
+                continue  # empty in both: only in the CSV
+            self.log(f"{t:<{w[0]}}  {src:<{w[1]}}  {n:>{w[2]},}  {got:>{w[3]},}  {diff:>{w[4]},}  {status}")
+        if empty:
+            self.log(f"({empty} table/source pairs empty in both, not listed; they are in the CSV)")
+        if app_rows:
+            self.log("\nRows written by the app after the merge (no source_db, not compared): "
+                     + ", ".join(f"{t} {n:,}" for t, n in sorted(app_rows.items())))
+        path = os.path.join(LOG_DIR, f"verify_counts_{self.stamp}.csv")
+        os.makedirs(LOG_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            wr = csv.writer(f)
+            wr.writerow(head)
+            wr.writerows(rows)
+        bad = [r for r in rows if r[5].startswith("DIFFERENT")]
+        todo = [r for r in rows if r[5] == "NOT COPIED YET"]
+        ok = len(rows) - len(bad) - len(todo) - sum(1 for r in rows if r[5].startswith("NOT MIGRATED"))
+        self.log(f"\n{ok} table/source pairs match, {len(bad)} different, {len(todo)} not copied yet. Saved: {path}")
+        if bad:
+            raise StepFailed(f"{len(bad)} table/source pair(s) have different row counts (listed first above).")
+
+    def restore_skipped(self):
+        """Insert the duplicate files the merge skipped (logged in _merge.conflict_log), with
+        their Metadata, Permissions and MigrationTasks, under the IDs they would have had.
+        Nothing already copied is deleted or changed. If Finish removed the source links /
+        staging copies, only the tables needed are linked / copied again."""
+        target = self.cfg["target"]
+        layout = self.layout(target)
+        if not layout:
+            raise StepFailed(f"{target} is not prepared - run step 1 first.")
+        staging = layout == "staging"
+        g = self.generate(staging)
+        self.section("check")
+        db_sources = self.psql_scalar(target, self.m(
+            "SELECT string_agg(source_db, ',' ORDER BY load_order) FROM _merge.source", staging))
+        if db_sources != ",".join(s["name"] for s in g.sources):
+            raise StepFailed(f"The source list is not the one this target was built with ({db_sources}). "
+                             "Put the same databases, in the same order, in the list and try again.")
+        skipped = self.psql_scalar(target, self.m(
+            "SELECT count(*) FROM _merge.conflict_log WHERE action = 'skipped'", staging))
+        if skipped == "0":
+            self.log("Nothing to restore: no row is marked as a skipped duplicate.")
+            return
+        self.log(f"{int(skipped):,} skipped rows (files and their tasks) in the conflict log")
+        if self.psql_scalar(target, self.m(HAS_LOADED_SOURCE, staging)) != "t":
+            path = self.sql(f"add_loaded_source_{self.stamp}.sql")
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(self.m(ADD_LOADED_SOURCE_SQL, staging))
+            self.psql_run(target, "add_loaded_source", file=path, extra_args=["-q", "--single-transaction"])
+        relinked = False
+        # (table, source) pairs that get rows back: copied from that source, and the source has skipped files
+        loaded = {tuple(line.split("\t")) for line in self.psql_scalar(target, self.m(
+            "SELECT table_name, source_db FROM _merge.loaded_source", staging), extra=("-F", "\t")).splitlines() if line}
+        with_skips = set(self.psql_scalar(target, self.m(
+            "SELECT DISTINCT source_db FROM _merge.conflict_log WHERE action = 'skipped'", staging)).splitlines())
+        work = [(s, t) for s, t in g.restore_needs() if s["name"] in with_skips and (t, s["name"]) in loaded]
+        to_copy, create = set(), set()
+        if staging:
+            names = sorted({generate.stage_table(s["name"], t) for s, t in g.restore_needs()})
+            present = set(self.psql_scalar(target, "SELECT tablename FROM pg_tables WHERE schemaname = 'public' "
+                                                   "AND tablename = ANY (ARRAY[" + ", ".join(
+                                                       generate.lit(n) for n in names) + "])").splitlines())
+            create = set(names) - present  # the script reads every source's table: create them all, even empty
+            needed = {generate.stage_table(s["name"], t) for s, t in work}
+            to_copy = (needed - present) | self._emptied_stage(target, needed & present)
+            if needed & present & to_copy:
+                self.log("These staging copies are EMPTY although step 1 filled them: they are UNLOGGED tables, which "
+                         "PostgreSQL empties when the server restarts after a crash (e.g. a full disk):\n  "
+                         + ", ".join(sorted(needed & present & to_copy)))
+            if to_copy:
+                self.log("Only the rows of the skipped duplicates are copied to staging (not the whole source "
+                         "tables). Step 2 copies such a table in full again before it uses it.")
+        self.section("disk space")
+        tables = [t for t in generate.RESTORE_TABLES if any(tt == t for _, tt in g.restore_needs())]
+        # an earlier run that failed (e.g. disk full) left its rolled-back rows behind: give that space back
+        self.psql_run(target, "vacuum", command=self.m(
+            "VACUUM (ANALYZE) " + ", ".join([f"public.{generate.q(t)}" for t in tables] + ["_merge.conflict_log"]), staging))
+        need = int(self.psql_scalar(target, self.m(restore_space_sql(tables), staging)) or 0)
+        copy_size = 0
+        if to_copy:
+            sizes, errors = self.source_sizes([s for s in g.sources if any(
+                generate.stage_table(s["name"], t) in to_copy for t in s["tables"])])
+            if errors:
+                raise StepFailed("Could not read the size of the source tables: " + "; ".join(
+                    f"{k}: {v}" for k, v in errors.items()))
+            # only the skipped share of each table is copied: size * skipped ids / rows step 1 copied
+            full = {}
+            for line in self.psql_scalar(target, self.m(
+                    "SELECT stage_table, COALESCE(row_count, 0) FROM _merge.stage", True), extra=("-F", "\t")).splitlines():
+                if line:
+                    st, n = line.split("\t")
+                    full[st] = int(n)
+            skips = {}
+            for line in self.psql_scalar(target, self.m(
+                    "SELECT source_db, table_name, count(*) FROM _merge.conflict_log WHERE action = 'skipped' "
+                    "GROUP BY 1, 2", True), extra=("-F", "\t")).splitlines():
+                if line:
+                    src, t, n = line.split("\t")
+                    skips[(src, t)] = int(n)
+            for s in g.sources:
+                for t, n in sizes.get(s["name"], {}).items():
+                    st = generate.stage_table(s["name"], t)
+                    if st in to_copy:
+                        part = skips.get((s["name"], generate.SKIP_CASCADE[t][0][0]), 0) / max(full.get(st, 0), 1)
+                        copy_size += int(n * min(part, 1.0))
+            self.log(f"copying the skipped rows of {len(to_copy)} source table(s) to staging needs about "
+                     f"{fmt_size(copy_size)}")
+        disk = self.free_space(target)
+        need += copy_size
+        need_all = need + disk["wal"]
+        self.log(f"needs about {fmt_size(need)} for the new rows, their indexes, the conflict-log marks "
+                 f"and the staging copies, plus up to {fmt_size(disk['wal'])} of WAL (max_wal_size)")
+        if disk["free"] is None:
+            self.log(f"free disk space unknown ({disk['why']}); make sure the server has at least "
+                     f"{fmt_size(need_all * 1.2)} free")
+        else:
+            self.log(f"free on the server: {fmt_size(disk['free'])} ({disk['how']})")
+            if disk["free"] < need_all * 1.2:
+                raise StepFailed(f"Not enough disk space on the database server: the restore needs about "
+                                 f"{fmt_size(need_all * 1.2)} (20% margin included), {fmt_size(disk['free'])} is free. "
+                                 "Nothing was inserted. Free up or add space on the server, then click again.")
+        if staging and (create or to_copy):
+            self.section("copy the needed source tables to staging again (through this PC)")
+            if create:
+                path = self.sql(f"restage_{self.stamp}.sql")
+                with open(path, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(g.restage_sql(create))
+                self.psql_run(target, "restage", file=path, extra_args=["-q", "--single-transaction"])
+            if to_copy:
+                self._copy_skipped_to_stage(g, target, [(s, t) for s, t in work
+                                                        if generate.stage_table(s["name"], t) in to_copy])
+                relinked = True
+        elif not staging and self.psql_scalar(target, LINKS_DIRECT) == "0":
+            self.section("attach the sources again")
+            self.psql_run(target, "attach", file=self.sql("01_attach_sources.sql"),
+                          variables=[f"src_user={self.cfg['src_user']}", f"src_password={self.cfg['src_password']}",
+                                     f"src_kerberos={'true' if self.cfg['src_kerberos'] else 'false'}"])
+            relinked = True
+        self.section("restore skipped duplicates")
+        path = self.sql(f"restore_skipped_{self.stamp}.sql")
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(self.m(g.restore_skipped(), staging))
+        self.psql_run(target, "restore_skipped", file=path)
+        left = int(self.psql_scalar(target, self.m(
+            "SELECT count(*) FROM _merge.conflict_log c WHERE c.action = 'skipped' AND EXISTS ("
+            "SELECT 1 FROM _merge.loaded_source l WHERE l.table_name = c.table_name AND l.source_db = c.source_db)",
+            staging)))
+        # verify compares with the staging copies, so only pairs whose copy is whole; partial copies
+        # (only the skipped rows) can't be compared that way: Verify counts reads the sources instead
+        partial = self._partial_stage(target, {generate.stage_table(s["name"], t) for s, t in work}) if staging else set()
+        holds = {}
+        for s, t in work:
+            if generate.stage_table(s["name"], t) not in partial:
+                holds.setdefault(t, []).append(s["name"])
+        if holds:
+            self._sequences_and_verify(target, g, staging, holds)
+        else:
+            self.section("sequences")
+            self.psql_run(target, "sequences", file=self.sql("04b_sequences.sql"))
+        if left:
+            raise StepFailed(f"{left:,} skipped rows were NOT restored: their rows were not found in the source "
+                             "(staging copy empty or changed?). See the log above.")
+        self.log("\nSkipped duplicates restored: every copy of a duplicate file is in Files now, with its "
+                 "Metadata, Permissions and tasks, tagged with its source_db.")
+        if partial:
+            self.log("Click Verify counts to compare every table with the source databases.")
+        if relinked:
+            self.log("The sources were linked / copied again for this. Click Finish to remove them when done.")
 
     def detach(self):
         target = self.cfg["target"]
@@ -668,6 +1221,168 @@ class Runner:
         self.psql_run(database, "schema_fix", file=path, extra_args=["--single-transaction"])
         self.log(f"\n{database}: missing tables / columns added (no rows copied).")
 
+    # ---------- upload metadata CSVs (metadata_upload.py) ----------
+    def metadata_state(self):
+        """{"metadata": missing/ok/other, "rows": estimate, "log": {SourceFile: row} or None}."""
+        target = self.cfg["target"]
+        state = json.loads(self.psql_scalar(target, metadata_upload.STATE_SQL))
+        state["log"] = json.loads(self.psql_scalar(target, metadata_upload.LOG_SQL)) if state["log"] else None
+        return state
+
+    def metadata_upload(self, folder, recreate, load, stop_on_error, stop):
+        """Create / extend Metadata_Extend + its upload log, then load every file of folder not loaded yet."""
+        target, mu = self.cfg["target"], metadata_upload
+        t_job = time.perf_counter()
+        self.section("upload metadata files")
+        files = mu.scan(folder) if load else []
+        log = {}
+        if not recreate:
+            state = self.metadata_state()
+            if state["metadata"] == "other":
+                raise StepFailed(f'"{mu.TABLE}" in {target} exists but is not an upload table (no "Source" '
+                                 "column). Rename or drop it first, or use Recreate.")
+            log = state["log"] or {}
+        todo = mu.to_load(files, log)
+        if load:
+            self.log(f"{folder}: {len(files):,} file(s) (.xlsx / .csv), {len(files) - len(todo):,} already loaded, "
+                     f"{len(todo):,} to load.")
+        heads, bad = {}, {}
+        for rel, full, _, _ in todo:
+            try:
+                heads[rel] = mu.read_header(full)
+            except Exception as e:  # noqa: BLE001 - a bad file is recorded, the others still load
+                bad[rel] = f"header: {type(e).__name__}: {e}"
+        cols = mu.union_columns(heads.values())
+        os.makedirs(WORK_SQL, exist_ok=True)
+        path = os.path.join(WORK_SQL, f"metadata_setup_{self.stamp}.sql")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(mu.setup_sql(cols, recreate))
+        if recreate:
+            self.log(f'Dropping "{mu.TABLE}" and "{mu.LOG_TABLE}" and creating them new.')
+        self.psql_run(target, "metadata_setup", file=path, extra_args=["-q"])
+        self.log(f'"{mu.TABLE}" has the columns of the files ({len(cols)} found in the files to load); '
+                 f'"{mu.LOG_TABLE}" tracks each file.')
+        if not load:
+            return
+        counts = {"loaded": 0, "rows": 0, "failed": 0}
+        t_load = time.perf_counter()
+        try:
+            self._upload_files(todo, bad, heads, target, stop, stop_on_error, counts)
+        finally:
+            done = counts["loaded"] + counts["failed"]
+            total, loading = time.perf_counter() - t_job, time.perf_counter() - t_load
+            self.log("\n==== upload summary ====\n"
+                     f"Files loaded:  {counts['loaded']:,} of {len(todo):,} to load ({counts['failed']:,} failed"
+                     + (", stopped" if stop.is_set() else "") + ")\n"
+                     f"Rows loaded:   {counts['rows']:,}\n"
+                     f"Loading time:  {mu.fmt_secs(loading)}"
+                     + (f"  (average {mu.fmt_secs(loading / done)} per file)" if done else "") + "\n"
+                     f"Total time:    {mu.fmt_secs(total)}  (including reading the folder and preparing the tables)")
+        if counts["failed"] and not stop.is_set():
+            raise StepFailed(f"{counts['failed']:,} file(s) failed - see {mu.LOG_TABLE} (Status = 'error'). "
+                             "Start upload again to retry them.")
+
+    def _upload_files(self, todo, bad, heads, target, stop, stop_on_error, counts):
+        """Load each file of todo in turn; counts gets loaded / rows / failed as it goes."""
+        mu = metadata_upload
+        for i, (rel, full, size, mtime) in enumerate(todo, 1):
+            if stop.is_set():
+                self.log("\nStopped. The next run starts from the first file not loaded.")
+                break
+            self.out.put(("mu_row", (rel, "loading", None, "", None)))
+            self.out.put(("step", f"upload {i:,}/{len(todo):,}: {rel}"))
+            t_file = time.perf_counter()
+            rows, err = (None, bad[rel]) if rel in bad else self._load_csv(target, rel, full, size, mtime, heads[rel])
+            secs = time.perf_counter() - t_file
+            if err is None:
+                counts["loaded"] += 1
+                counts["rows"] += rows
+                self.out.put(("mu_row", (rel, mu.DONE, rows, "", secs)))
+                self.log(f"[{i:,}/{len(todo):,}] {mu.fmt_secs(secs):>8}  {rows:,} row(s)  {rel}")
+                continue
+            counts["failed"] += 1
+            status = "stopped" if stop.is_set() else "error"
+            self.log(f"[{i:,}/{len(todo):,}] {mu.fmt_secs(secs):>8}  {status.upper()}  {rel}\n    {err}")
+            self.out.put(("mu_row", (rel, status, None, err, secs)))
+            try:
+                self.psql_scalar(target, mu.error_sql(rel, size, mtime, err, status))
+            except StepFailed as e:
+                raise StepFailed(f"cannot record the error of {rel} in {mu.LOG_TABLE}: {e}") from e
+            if stop.is_set():
+                self.log("\nStopped. The next run starts again from this file.")
+                break
+            if stop_on_error:
+                raise StepFailed(f"{rel} failed (nothing of it was loaded). Fix it and click Start upload: "
+                                 "the run starts again from this file.")
+
+    def prepare_upload(self, raw, upload, config_path, workers, stop, fmt, fill=False):
+        """Raw export -> upload files, one pass, no intermediate copies (upload_prep.py). Needs no database."""
+        self.section("build upload files")
+        self.log(f"raw export: {raw}\nupload:     {upload}  (.{fmt})\nworkers:    {workers}")
+        errors = upload_prep.run(raw, upload, config_path, workers, stop, self.log, fmt, fill)
+        if errors:
+            raise StepFailed(f"{len(errors):,} file(s) failed (listed above). Fix them and click Build again: "
+                             "files already built are kept.")
+
+    def _load_csv(self, target, rel, full, size, mtime, cols):
+        """(rows, None) or (None, error text). The file goes to psql's stdin (\\copy ... FROM pstdin):
+        a CSV as it is, an .xlsx converted to CSV on the fly."""
+        args = ["-q", "-tA"]
+        for c in metadata_upload.load_commands(rel, size, mtime, cols):
+            args += ["-c", c]
+        feed_error = None
+        try:
+            if metadata_upload.is_xlsx(full):
+                self.mu_proc = proc = subprocess.Popen(self._cmd(target, args), env=self.env, creationflags=NO_WINDOW,
+                                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                                       stderr=subprocess.PIPE)
+                outs = {}
+                readers = [threading.Thread(target=lambda k, s: outs.__setitem__(k, s.read()), args=(k, s), daemon=True)
+                           for k, s in (("out", proc.stdout), ("err", proc.stderr))]
+                for t in readers:
+                    t.start()
+                text = io.TextIOWrapper(proc.stdin, encoding="utf-8", newline="")
+                try:
+                    w = csv.writer(text)
+                    for row in metadata_upload.xlsx_rows(full):
+                        w.writerow(row)
+                except OSError:
+                    pass  # psql closed its input (it failed or was stopped): its own exit code / error count
+                except Exception as e:  # noqa: BLE001 - unreadable workbook: stop psql, nothing is committed
+                    feed_error = f"reading the workbook: {type(e).__name__}: {e}"
+                    proc.kill()
+                finally:
+                    try:
+                        text.close()
+                    except OSError:
+                        pass
+                proc.wait()
+                for t in readers:
+                    t.join()
+                out, err = outs.get("out", b""), outs.get("err", b"")
+            else:
+                with open(full, "rb") as f:
+                    self.mu_proc = proc = subprocess.Popen(self._cmd(target, args), env=self.env,
+                                                           creationflags=NO_WINDOW, stdin=f,
+                                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    out, err = proc.communicate()
+        except OSError as e:
+            return None, f"{type(e).__name__}: {e}"
+        finally:
+            self.mu_proc = None
+        out = out.decode("utf-8", errors="replace").strip()
+        err = err.decode("utf-8", errors="replace").strip()
+        if feed_error:
+            return None, feed_error[:2000]
+        if proc.returncode == 0:
+            last = out.splitlines()[-1].strip() if out else ""
+            if last.isdigit():
+                return int(last), None
+            return None, f"unexpected psql output: {out[-500:]}"
+        lines = [ln for ln in err.splitlines() if ln.strip()]
+        keep = [ln for ln in lines if any(k in ln for k in ("ERROR", "CONTEXT", "DETAIL", "HINT", "FATAL"))]
+        return None, ("\n".join(keep or lines[-5:]) or f"psql exit code {proc.returncode}")[:2000]
+
     def run(self, job, *args):
         try:
             job(*args)
@@ -686,8 +1401,9 @@ def plan_copy(checked, chosen, plan):
     - with none left it is reloaded: emptied (from every source), then copied from the chosen ones;
     - a row needs its parent from the same source, so parents not copied yet are added;
     - reloading a table also reloads its copied children (TRUNCATE ... CASCADE empties them);
-    - a table with merge rules takes its sources in list order, or the wrong source would win a
-      conflict. Copied-as-is tables have no conflicts, so any order will do.
+    - Files (generate.ORDERED_TABLES) takes its sources in list order, or the wrong source would
+      win a tie between duplicate files (a Completed copy always wins). Other tables keep every
+      row, so any order will do.
     Returns {"copies": {table: [source]}, "reload": set, "added": set of tables nobody ticked,
     "holds": {table: [source]} after the copy, "lost": {table: [source]} no longer held,
     "errors": [text], "not_there": ticked tables that no chosen source has}."""
@@ -696,7 +1412,6 @@ def plan_copy(checked, chosen, plan):
     has = {r[0]: names(r[3]) for r in plan}
     needs = {r[0]: names(r[2]) for r in plan}
     loaded = {r[0]: set(names(r[7])) for r in plan}
-    rules = {r[0] for r in plan if r[1] != "copied as-is"}
     copies, reload, not_there = {}, set(), set()
     for t in checked:
         wanted = set(has[t]) & set(chosen)
@@ -728,7 +1443,7 @@ def plan_copy(checked, chosen, plan):
     holds = {t: (set() if t in reload else loaded[t]) | copies.get(t, set()) for t in order if t in copies or t in reload}
     errors = []
     for t in order:
-        if t in rules and t in copies:
+        if t in generate.ORDERED_TABLES and t in copies:
             last = max(has[t].index(s) for s in copies[t])
             before = [s for s in has[t][:last] if s not in holds[t]]
             if before:
@@ -756,6 +1471,8 @@ class App(tk.Tk):
         self.checked = set()
         self.plan_sources = []  # databases of the target's plan, in priority order
         self.db_off = set()  # the ones unticked for step 2
+        self.space = None  # the last space check: {"sizes", "errors", "disk", "at"}
+        self.space_seq = 0  # only the newest check counts
         self._ensure_sources()
         self.skip_tables = set(self._read_sources().get("skip_tables") or [])  # as of the last step 1
         self.picker = None  # the open "Load table list" window
@@ -795,7 +1512,7 @@ class App(tk.Tk):
             return {}
 
     def _target_from_sources(self):
-        return self._read_sources().get("target_dbname", "MtrMigration_Consolidated")
+        return self._read_sources().get("target_dbname", "cwp2")
 
     def _source_names_from_file(self):
         names = []
@@ -833,7 +1550,7 @@ class App(tk.Tk):
 
     def _write_sources(self, entries, target):
         cfg = {"_comment": ["Written by MtrDbMigration from its 'Source databases' list (order = priority:",
-                            "the first source wins when two hold the same record). host/port are as seen",
+                            "a Completed copy of a file wins, otherwise the first source). host/port are as seen",
                             "from the target server; 'localhost' = the same server as the target."],
                "target_dbname": target, "sources": entries}
         if self.skip_tables:
@@ -851,6 +1568,11 @@ class App(tk.Tk):
     def _save_settings(self, cfg):
         keep = {k: cfg[k] for k in ("host", "port", "user", "target", "src_user", "docker",
                                     "kerberos", "krbsrvname", "src_kerberos", "role", "staging")}
+        if hasattr(self, "mu_folder"):
+            keep["mu_folder"] = self.mu_folder.get().strip()
+            keep["mu_raw"] = self.mu_raw.get().strip()
+            keep["mu_format"] = self.mu_format.get()
+            keep["mu_fill"] = self.mu_fill.get()
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(keep, f, indent=2)
@@ -908,7 +1630,19 @@ class App(tk.Tk):
         self.db_text = tk.Text(dbs, width=30, height=9, font=("Consolas", 9))
         self.db_text.grid(row=0, column=0, sticky="nsew")
         self.db_text.insert("1.0", "\n".join(self._source_names_from_file()))
-        ttk.Button(dbs, text="Load all from server", command=self._load_dbs).grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        # the line holding the cursor is the one Move up / Move down acts on: highlight it
+        self.db_text.tag_configure("current_db", background="#cce4ff")
+        for ev in ("<ButtonRelease-1>", "<KeyRelease>", "<FocusIn>"):
+            self.db_text.bind(ev, lambda e: self._mark_db_line(), add="+")
+        self.db_text.bind("<Alt-Up>", lambda e: self._move_db(-1) or "break")
+        self.db_text.bind("<Alt-Down>", lambda e: self._move_db(1) or "break")
+        moves = ttk.Frame(dbs)
+        moves.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(moves, text="Move up", command=lambda: self._move_db(-1)).pack(side="left", fill="x", expand=True)
+        ttk.Button(moves, text="Move down", command=lambda: self._move_db(1)).pack(side="left", fill="x", expand=True, padx=(4, 0))
+        ttk.Label(dbs, text="Click a line, then Move up / down (or Alt+Up / Alt+Down).",
+                  foreground="#555").grid(row=2, column=0, sticky="w")
+        ttk.Button(dbs, text="Load all from server", command=self._load_dbs).grid(row=3, column=0, sticky="ew", pady=(6, 0))
         dbs.rowconfigure(0, weight=1)
         dbs.columnconfigure(0, weight=1)
         top.columnconfigure(2, weight=1)
@@ -962,21 +1696,36 @@ class App(tk.Tk):
         ttk.Button(bar, text="Untick all", command=lambda: self._tick_all(False)).pack(side="left", padx=(8, 0))
         self.detach_btn = ttk.Button(bar, text="Finish: remove source links / copies", command=self._detach)
         self.matrix_btn = ttk.Button(bar, text="Build Metadata Matrix", command=self._matrix)
+        self.restore_btn = ttk.Button(bar, text="Insert skipped duplicates", command=self._restore_skipped)
+        self.restore_btn.pack(side="right", padx=(0, 8))
+        self.counts_btn = ttk.Button(bar, text="Verify counts", command=self._verify_counts)
+        self.counts_btn.pack(side="right", padx=(0, 8))
         self.matrix_btn.pack(side="right", padx=(0, 8))
         self.detach_btn.pack(side="right")
         self.plan_info = ttk.Label(s2, text="Run step 1, or click Refresh list if it is already done.", foreground="#555")
         self.plan_info.pack(fill="x", pady=(6, 2))
+        sp = ttk.Frame(s2)
+        sp.pack(fill="x", pady=(0, 4))
+        ttk.Button(sp, text="Check space", command=self._check_space).pack(side="right")
+        ttk.Label(sp, text="GB").pack(side="right", padx=(2, 10))
+        self.free_gb = tk.StringVar()
+        self.free_entry = ttk.Entry(sp, textvariable=self.free_gb, width=8)
+        self.free_entry.pack(side="right")
+        ttk.Label(sp, text="Free disk, if not detected:").pack(side="right", padx=(10, 4))
+        self.space_info = ttk.Label(sp, text="", foreground="#555", wraplength=780)
+        self.space_info.pack(side="left", fill="x", expand=True)
+        self.free_gb.trace_add("write", lambda *_: self._update_space())
 
-        cols = ("tick", "table", "kind", "needs", "sources", "source_rows", "loaded_rows", "loaded_from", "loaded_at")
-        heads = ("Copy", "Table", "Type", "Needs", "Sources", "Rows in sources", "Rows loaded", "Copied from", "Loaded at")
-        widths = (44, 220, 90, 130, 200, 100, 90, 170, 120)
+        cols = ("tick", "table", "kind", "needs", "sources", "source_rows", "source_size", "loaded_rows", "loaded_from", "loaded_at")
+        heads = ("Copy", "Table", "Type", "Needs", "Sources", "Rows in sources", "Size in sources", "Rows loaded", "Copied from", "Loaded at")
+        widths = (44, 200, 90, 120, 180, 100, 90, 90, 160, 120)
         frame = ttk.Frame(s2)
         frame.pack(fill="both", expand=True)
         dbs = ttk.Frame(frame)
         dbs.pack(side="left", fill="y", padx=(0, 8))
-        self.db_tree = ttk.Treeview(dbs, columns=("tick", "db", "done"), show="headings", height=11, selectmode="none")
+        self.db_tree = ttk.Treeview(dbs, columns=("tick", "db", "done", "size"), show="headings", height=11, selectmode="none")
         for c, h, w, a in (("tick", "Copy", 44, "center"), ("db", "Database (priority order)", 170, "w"),
-                           ("done", "Tables copied", 90, "center")):
+                           ("done", "Tables copied", 90, "center"), ("size", "Size", 70, "e")):
             self.db_tree.heading(c, text=h)
             self.db_tree.column(c, width=w, anchor=a, stretch=False)
         self.db_tree.pack(side="left", fill="y")
@@ -984,7 +1733,7 @@ class App(tk.Tk):
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", height=11, selectmode="none")
         for c, h, w in zip(cols, heads, widths):
             self.tree.heading(c, text=h)
-            anchor = "e" if c in ("source_rows", "loaded_rows") else ("center" if c == "tick" else "w")
+            anchor = "e" if c in ("source_rows", "source_size", "loaded_rows") else ("center" if c == "tick" else "w")
             self.tree.column(c, width=w, anchor=anchor, stretch=c in ("table", "sources"))
         self.tree.tag_configure("loaded", foreground="#1a7f37")
         self.tree.tag_configure("partial", foreground="#b35900")
@@ -998,7 +1747,9 @@ class App(tk.Tk):
 
         self._build_compare(nb)
         self._build_acl(nb)
-        self.job_btns = (self.step1_btn, self.copy_btn, self.recheck_btn, self.detach_btn, self.matrix_btn, self.fix_btn)
+        self._build_upload(nb)
+        self.job_btns = (self.step1_btn, self.copy_btn, self.recheck_btn, self.detach_btn, self.matrix_btn, self.restore_btn, self.counts_btn, self.fix_btn,
+                         self.mu_start_btn, self.mu_forget_btn, self.mu_recreate_btn, self.mu_prep_btn)
 
         status = ttk.Frame(self, padding=(14, 4, 14, 0))
         status.pack(fill="x")
@@ -1141,6 +1892,8 @@ class App(tk.Tk):
             self.plan_rows, self.plan_sources = [], []
             self.checked.clear()
             self.plan_info.configure(text=f"{self.vars['target'].get()} is not prepared yet - run step 1 first.")
+            self.space = None
+            self.space_info.configure(text="")
             return
         self.plan_sources, rows = plan
         self.plan_rows = rows
@@ -1152,22 +1905,122 @@ class App(tk.Tk):
             n_loaded += n_done == n_have
             self.tree.insert("", "end", iid=t, tags=("loaded",) if n_done == n_have else ("partial",) if n_done else (),
                              values=("☑" if t in self.checked else "☐", t, kind, needs, sources,
-                                     f"{int(src_rows):,}" if src_rows else "", f"{int(loaded_rows):,}" if loaded_rows else "",
+                                     f"{int(src_rows):,}" if src_rows else "", "", f"{int(loaded_rows):,}" if loaded_rows else "",
                                      "all" if n_done == n_have else loaded_from, loaded_at or "not loaded"))
         for s in self.plan_sources:
             have = [r for r in rows if s in r[3].split(", ")]
             done = sum(1 for r in have if s in r[7].split(", "))
-            self.db_tree.insert("", "end", iid=s, values=("☐" if s in self.db_off else "☑", s, f"{done} / {len(have)}"))
+            self.db_tree.insert("", "end", iid=s, values=("☐" if s in self.db_off else "☑", s, f"{done} / {len(have)}", ""))
         self.plan_info.configure(text=f"{len(rows)} tables, {n_loaded} fully loaded. Tick the databases to copy on the "
-                                      "left (top = wins conflicts, so copy in this order). Click a row to tick it; double-click "
+                                      "left (a Completed copy of a file wins, otherwise the top one, so copy Files in this order). "
+                                      "Click a row to tick it; double-click "
                                       "or right-click it to see its columns per source database and add indexes. "
                                       "Tables a ticked table needs are added automatically.")
+        self._show_sizes()
+        self._update_space()
+
+    # ---------- disk space ----------
+    def _check_space(self):
+        """Read the table sizes of the sources and the server's free disk, off the UI thread."""
+        if not self.plan_rows:
+            self.space_info.configure(text="Run step 1, or click Refresh list, first.")
+            return
+        try:
+            cfg = self._config()
+        except ValueError as e:
+            messagebox.showerror(TITLE, str(e))
+            return
+        known = {s["name"]: s for s in self._read_sources().get("sources", []) if isinstance(s, dict) and s.get("name")}
+        entries = [{"name": n, "dbname": known[n].get("dbname", n), "host": known[n].get("host", "localhost"),
+                    "port": known[n].get("port", 5432)} for n in self.plan_sources if n in known]
+        missing = {n: "not in sources.json" for n in self.plan_sources if n not in known}
+        self.space_seq += 1
+        seq = self.space_seq
+        self.space_info.configure(text="Reading table sizes and free disk...", foreground="#555")
+
+        def work():
+            runner = Runner(cfg, self.queue)
+            sizes, errors = runner.source_sizes(entries)
+            disk = runner.free_space(cfg["target"])
+            self.queue.put(("space", (seq, {"sizes": sizes, "errors": {**missing, **errors}, "disk": disk,
+                                            "at": datetime.now().strftime("%H:%M")})))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_sizes(self):
+        """Fill the size columns from the last check."""
+        if not self.space:
+            return
+        sizes = self.space["sizes"]
+        for r in self.plan_rows:
+            have = [s for s in r[3].split(", ") if s and r[0] in sizes.get(s, {})]
+            if self.tree.exists(r[0]) and have:
+                self.tree.set(r[0], "source_size", fmt_size(sum(sizes[s][r[0]] for s in have)))
+        for s in self.plan_sources:
+            if self.db_tree.exists(s) and s in sizes:
+                self.db_tree.set(s, "size", fmt_size(sum(sizes[s].get(r[0], 0) for r in self.plan_rows
+                                                         if s in r[3].split(", "))))
+
+    def _free_now(self):
+        """(free bytes or None, text saying where the number comes from)."""
+        disk = self.space["disk"] if self.space else None
+        if disk and disk["free"] is not None:
+            return disk["free"], f"read at {self.space['at']}"
+        try:
+            typed = float(self.free_gb.get().strip().replace(",", ""))
+        except ValueError:
+            return None, ""
+        return (int(typed * 1024 ** 3), "typed by you") if typed >= 0 else (None, "")
+
+    def _space_report(self, copies):
+        """(one-line summary, more detail for the Copy question, not enough space?) for `copies`."""
+        disk = self.space["disk"]
+        est = estimate_space(copies, self.space["sizes"], disk["wal"])
+        free, source = self._free_now()
+        need = ("at least " if est["unknown"] else "about ") + fmt_size(est["need"])
+        have = f"{fmt_size(free)} free ({source})" if free is not None else "an unknown amount free"
+        short = free is not None and free < est["need"]
+        verdict = " - NOT ENOUGH SPACE" if short else " - should fit" if free is not None and not est["unknown"] else ""
+        line = (f"Ticked tables need {need} ({fmt_size(est['data'])} data + {fmt_size(est['margin'])} margin + "
+                f"{fmt_size(est['wal'])} WAL); server has {have}{verdict}")
+        detail = [f"Disk space: needs {need} = {fmt_size(est['data'])} data + {fmt_size(est['margin'])} margin "
+                  f"+ {fmt_size(est['wal'])} WAL. Server has {have}.",
+                  "This is an estimate from the size of the tables in the sources."]
+        if est["unknown"]:
+            detail.append("Size not known, so not counted: " + ", ".join(sorted({t for t, _ in est["unknown"]}))
+                          + " in " + ", ".join(sorted({s for _, s in est["unknown"]})))
+        if disk["idle_slots"]:
+            detail.append(f"{disk['idle_slots']} inactive replication slot(s) keep WAL on disk, so the copy can need "
+                          "much more than this.")
+        if short:
+            detail.insert(0, "NOT ENOUGH DISK SPACE: PostgreSQL stops if its disk fills up, for every database on the server.")
+        return line, detail, short
+
+    def _update_space(self):
+        """The line above the table list; runs on every tick."""
+        if not self.space:
+            return
+        disk = self.space["disk"]
+        self.free_entry.configure(state="disabled" if disk["free"] is not None else "normal")
+        chosen = [s for s in self.plan_sources if s not in self.db_off]
+        copies = plan_copy(self.checked, chosen, self.plan_rows)["copies"] if self.checked and chosen else {}
+        short = False
+        if copies:
+            text, _, short = self._space_report(copies)
+        else:
+            free, source = self._free_now()
+            text = "Tick tables and databases to see the space they need. " + (
+                f"Server has {fmt_size(free)} free ({source})." if free is not None else "Free disk unknown.")
+        if disk["free"] is None and not self.free_gb.get().strip():
+            text += ". Not detected: type it from df -h on the server."
+        self.space_info.configure(text=text, foreground="#b00020" if short else "#555")
 
     def _on_db_click(self, event):
         s = self.db_tree.identify_row(event.y)
         if s:
             self.db_off ^= {s}
             self.db_tree.set(s, "tick", "☐" if s in self.db_off else "☑")
+            self._update_space()
 
     def _on_tree_click(self, event):
         t = self.tree.identify_row(event.y)
@@ -1178,6 +2031,7 @@ class App(tk.Tk):
         else:
             self.checked.add(t)
         self.tree.set(t, "tick", "☑" if t in self.checked else "☐")
+        self._update_space()
 
     def _on_tree_double(self, event):
         self._on_tree_click(event)  # undo the tick the first click of the double-click made
@@ -2093,16 +2947,332 @@ class App(tk.Tk):
         elif messagebox.askyesno(TITLE, f"{done}\n\nLog:\n{self.acl_apply_log}\n\nOpen the log now?"):
             os.startfile(self.acl_apply_log)
 
+    # ---------- "Upload metadata" tab (metadata_upload.py) ----------
+    def _build_upload(self, nb):
+        tab = ttk.Frame(nb, padding=8)
+        nb.add(tab, text="Upload metadata")
+        self.mu_folder = tk.StringVar(value=self._load_settings().get("mu_folder", ""))
+        self.mu_stop_on_error = tk.BooleanVar(value=True)
+        self.mu_stop = threading.Event()
+        self.mu_active = False      # an upload job is running
+        self.mu_iid = {}            # SourceFile -> tree item
+        self.runner = None
+
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x")
+        ttk.Label(bar, text="Upload folder").pack(side="left")
+        entry = ttk.Entry(bar, textvariable=self.mu_folder, width=60)
+        entry.pack(side="left", padx=(6, 4), fill="x", expand=True)
+        entry.bind("<Return>", lambda _: self._mu_refresh())
+        ttk.Button(bar, text="Browse...", command=self._mu_browse).pack(side="left", padx=(0, 6))
+        ttk.Button(bar, text="Scan / refresh status", command=self._mu_refresh).pack(side="left")
+
+        acts = ttk.Frame(tab)
+        acts.pack(fill="x", pady=(6, 0))
+        self.mu_start_btn = ttk.Button(acts, text="Start upload", command=self._mu_start)
+        self.mu_start_btn.pack(side="left")
+        self.mu_stop_btn = ttk.Button(acts, text="Stop", command=self._mu_stop_now, state="disabled")
+        self.mu_stop_btn.pack(side="left", padx=(6, 0))
+        ttk.Checkbutton(acts, text="Stop at the first error", variable=self.mu_stop_on_error).pack(
+            side="left", padx=(12, 0))
+        self.mu_recreate_btn = ttk.Button(acts, text="Recreate Metadata_Extend table...", command=self._mu_recreate)
+        self.mu_recreate_btn.pack(side="right")
+        self.mu_forget_btn = ttk.Button(acts, text="Reload selected", command=self._mu_forget)
+        self.mu_forget_btn.pack(side="right", padx=(0, 6))
+
+        prep = ttk.LabelFrame(tab, text="Build the upload files from a raw SharePoint export", padding=6)
+        prep.pack(fill="x", pady=(8, 0))
+        self.mu_raw = tk.StringVar(value=self._load_settings().get("mu_raw", ""))
+        self.mu_workers = tk.StringVar(value=str(max(1, min(6, (os.cpu_count() or 2) - 1))))
+        self.mu_format = tk.StringVar(value=self._load_settings().get("mu_format", "xlsx"))
+        self.mu_fill = tk.BooleanVar(value=self._load_settings().get("mu_fill", False))
+        ttk.Label(prep, text="Raw export folder").pack(side="left")
+        ttk.Entry(prep, textvariable=self.mu_raw, width=50).pack(side="left", padx=(6, 4), fill="x", expand=True)
+        ttk.Button(prep, text="Browse...", command=self._mu_raw_browse).pack(side="left", padx=(0, 12))
+        ttk.Label(prep, text="Workers").pack(side="left")
+        ttk.Spinbox(prep, from_=1, to=32, width=4, textvariable=self.mu_workers).pack(side="left", padx=(6, 12))
+        ttk.Label(prep, text="Save as").pack(side="left")
+        ttk.Radiobutton(prep, text=".xlsx", variable=self.mu_format, value="xlsx").pack(side="left", padx=(6, 0))
+        ttk.Radiobutton(prep, text=".csv", variable=self.mu_format, value="csv").pack(side="left", padx=(6, 12))
+        ttk.Checkbutton(prep, text="Fill empty Created / Modified By from Author / Editor",
+                        variable=self.mu_fill).pack(side="left", padx=(0, 12))
+        self.mu_prep_btn = ttk.Button(prep, text="Build upload files", command=self._mu_prepare)
+        self.mu_prep_btn.pack(side="left")
+
+        self.mu_info = ttk.Label(tab, foreground="#555", justify="left", text=(
+            "Pick the folder of upload .xlsx / .csv files (e.g. compareDanielUpload) and "
+            "click Scan. Start upload loads every file "
+            f"into \"{metadata_upload.TABLE}\" (column Source = the file's path) and records each file in "
+            f"\"{metadata_upload.LOG_TABLE}\". Files already done are skipped, so after an error the next run "
+            "starts from that file. The original Metadata table is not touched."))
+        self.mu_info.pack(fill="x", pady=(6, 2))
+        self.mu_info.bind("<Configure>", lambda e: self.mu_info.configure(wraplength=max(e.width - 10, 200)))
+
+        frame = ttk.Frame(tab)
+        frame.pack(fill="both", expand=True)
+        cols = ("size", "status", "rows", "time", "finished", "error")
+        heads = ("Size", "Status", "Rows", "Time", "Finished", "Error")
+        widths = (80, 80, 90, 70, 140, 420)
+        self.mu_tree = ttk.Treeview(frame, columns=cols, show="tree headings", height=12)
+        self.mu_tree.heading("#0", text="File (Source)")
+        self.mu_tree.column("#0", width=520, stretch=True)
+        for c, h, w in zip(cols, heads, widths):
+            self.mu_tree.heading(c, text=h)
+            self.mu_tree.column(c, width=w, anchor="e" if c in ("size", "rows", "time") else "w",
+                                stretch=c == "error")
+        for tag, color in (("done", "#1a7f37"), ("error", "#c00000"), ("stopped", "#b35900"),
+                           ("loading", "#1f4e9e"), ("changed", "#b35900")):
+            self.mu_tree.tag_configure(tag, foreground=color)
+        self.mu_tree.tag_configure("next", font=("Segoe UI", 9, "bold"))
+        ys = ttk.Scrollbar(frame, orient="vertical", command=self.mu_tree.yview)
+        xs = ttk.Scrollbar(frame, orient="horizontal", command=self.mu_tree.xview)
+        self.mu_tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
+        self.mu_tree.grid(row=0, column=0, sticky="nsew")
+        ys.grid(row=0, column=1, sticky="ns")
+        xs.grid(row=1, column=0, sticky="ew")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+        self.mu_tree.bind("<Double-Button-1>", self._mu_show_error)
+
+    def _mu_browse(self):
+        path = filedialog.askdirectory(parent=self, title="Upload folder (.xlsx / .csv files)",
+                                       initialdir=self.mu_folder.get().strip() or None)
+        if path:
+            self.mu_folder.set(os.path.normpath(path))
+            self._mu_refresh()
+
+    def _mu_raw_browse(self):
+        path = filedialog.askdirectory(parent=self, title="Raw SharePoint export folder (e.g. compareDaniel)",
+                                       initialdir=self.mu_raw.get().strip() or None)
+        if path:
+            self.mu_raw.set(os.path.normpath(path))
+            if not self.mu_folder.get().strip():
+                self.mu_folder.set(upload_prep.default_upload(os.path.normpath(path)))
+
+    def _mu_prepare(self):
+        if self.running:
+            return
+        raw = os.path.normpath(self.mu_raw.get().strip()) if self.mu_raw.get().strip() else ""
+        if not raw or not os.path.isdir(raw):
+            messagebox.showerror(TITLE, "Pick the raw export folder (e.g. compareDaniel) first.")
+            return
+        if not self.mu_folder.get().strip():
+            self.mu_folder.set(upload_prep.default_upload(raw))
+        upload = os.path.normpath(self.mu_folder.get().strip())
+        fmt = self.mu_format.get()
+        nr, nu = os.path.normcase(raw), os.path.normcase(upload)
+        if nr == nu or nu.startswith(nr + os.sep) or nr.startswith(nu + os.sep):
+            messagebox.showerror(TITLE, "The upload folder (output) must not be the raw export folder or inside it.")
+            return
+        config = next((os.path.normpath(p) for p in MH_CONFIGS if os.path.isfile(p)), None)
+        if not config:
+            messagebox.showerror(TITLE, "metadata_horizontal\\config.json (the upload CSV columns) was not found.")
+            return
+        try:
+            workers = max(1, int(self.mu_workers.get()))
+        except ValueError:
+            workers = 4
+        if not messagebox.askyesno(TITLE, f"Build the upload files from\n{raw}\n\ninto\n{upload}  (.{fmt})\n\n"
+                                          "Each raw CSV becomes one ." + fmt + " file directly (MetaInfo expanded, "
+                                          "columns selected); no intermediate files are made.\n\n"
+                                          + (("Empty Created_x0020_By / Modified_x0020_By are filled from Author / "
+                                              f"Editor.\nFill log: {upload_prep.fill_log_path(upload)}\n")
+                                             if self.mu_fill.get() else
+                                             "Author, Created_x0020_By, Created, Editor, Modified_x0020_By and Modified "
+                                             "stay as in the raw CSV (no fill).\n")
+                                          + f"Column profile: {upload_prep.profile_path(upload)}\n"
+                                          f"Columns from {config}.\n\n"
+                                          "Files already in the upload folder are kept (delete them to build "
+                                          "again). The raw export is only read. A big export takes a while."):
+            return
+        try:
+            cfg = self._config()  # no database is used; the job runner just needs the settings
+        except ValueError as e:
+            messagebox.showerror(TITLE, str(e))
+            return
+        self.mu_stop.clear()
+        self.mu_active = True
+        self._launch("prepare_upload", raw, upload, config, workers, self.mu_stop, fmt, self.mu_fill.get(), cfg=cfg)
+        self.mu_stop_btn.configure(state="normal")
+
+    def _mu_refresh(self):
+        """Scan the folder and read MetadataUpload (on a thread); shows the result in the list."""
+        folder = self.mu_folder.get().strip()
+        if not folder:
+            return
+        try:
+            cfg = self._config()
+        except ValueError:
+            cfg = None
+        self.mu_info.configure(text=f"Scanning {folder}...")
+
+        def work():
+            files, state, err = [], None, ""
+            try:
+                files = metadata_upload.scan(folder) if os.path.isdir(folder) else None
+            except OSError as e:
+                err = f"Cannot read {folder}: {e}"
+            if cfg:
+                try:
+                    state = Runner(cfg, self.queue).metadata_state()
+                except (StepFailed, OSError, ValueError) as e:
+                    err = (err + "\n" if err else "") + f"Cannot read the upload status from {cfg['target']}: {e}"
+            self.queue.put(("mu_scan", (folder, files, state, err)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _mu_show(self, folder, files, state, err):
+        self.mu_tree.delete(*self.mu_tree.get_children())
+        self.mu_iid = {}
+        if files is None:
+            self.mu_info.configure(text=f"Folder not found: {folder}")
+            return
+        log = (state or {}).get("log") or {}
+        counts, next_rel = {}, None
+        for i, f in enumerate(files):
+            rel, _, size, _ = f
+            row = log.get(rel) or {}
+            status = metadata_upload.status_of(f, log.get(rel))
+            counts[status] = counts.get(status, 0) + 1
+            tags = [status]
+            if next_rel is None and status != metadata_upload.DONE:
+                next_rel = rel
+                tags.append("next")
+            rows = row.get("rows")
+            self.mu_iid[rel] = self.mu_tree.insert(
+                "", "end", iid=f"mu{i}", text=rel, tags=tags,
+                values=(fmt_size(size), status, "" if rows is None else f"{rows:,}",
+                        metadata_upload.fmt_secs(row.get("seconds")), row.get("finished") or "",
+                        (row.get("error") or "").replace("\n", "  ")))
+        if next_rel:
+            self.mu_tree.see(self.mu_iid[next_rel])
+        parts = [f"{len(files):,} file(s)"] + [f"{n:,} {k}" for k, n in sorted(counts.items())]
+        text = ", ".join(parts) + "."
+        if state:
+            if state["metadata"] == "other":
+                text += f'  "{metadata_upload.TABLE}" exists but is not an upload table (no "Source" column).'
+            elif state["metadata"] == "missing":
+                text += f'  "{metadata_upload.TABLE}" does not exist yet: the first upload creates it.'
+        text += f"  Next to load: {next_rel}" if next_rel else ("  All loaded." if files else "")
+        if err:
+            text += "\n" + err
+        self.mu_info.configure(text=text)
+
+    def _mu_set(self, rel, status, rows, error, secs=None):
+        iid = self.mu_iid.get(rel)
+        if not iid:
+            return
+        self.mu_tree.item(iid, tags=[status], values=(
+            self.mu_tree.set(iid, "size"), status, "" if rows is None else f"{rows:,}", metadata_upload.fmt_secs(secs),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S") if status != "loading" else "", error.replace("\n", "  ")))
+        if status == "loading":
+            self.mu_tree.see(iid)
+
+    def _mu_show_error(self, event):
+        iid = self.mu_tree.identify_row(event.y)
+        if iid and self.mu_tree.set(iid, "error"):
+            messagebox.showinfo(TITLE, f"{self.mu_tree.item(iid, 'text')}\n\n{self.mu_tree.set(iid, 'error')}")
+
+    def _mu_cfg(self):
+        if self.running:
+            return None
+        try:
+            return self._config()
+        except ValueError as e:
+            messagebox.showerror(TITLE, str(e))
+            return None
+
+    def _mu_run(self, cfg, recreate, load):
+        self.mu_stop.clear()
+        self.mu_active = True
+        self._launch("metadata_upload", self.mu_folder.get().strip(), recreate, load, self.mu_stop_on_error.get(),
+                     self.mu_stop, cfg=cfg)
+        self.mu_stop_btn.configure(state="normal" if load else "disabled")
+
+    def _mu_start(self):
+        cfg = self._mu_cfg()
+        if not cfg:
+            return
+        folder = self.mu_folder.get().strip()
+        if not folder or not os.path.isdir(folder):
+            messagebox.showerror(TITLE, "Pick the upload folder first.")
+            return
+        runner = Runner(cfg, self.queue)
+        try:
+            state = runner.metadata_state()
+        except (StepFailed, OSError, ValueError) as e:
+            if "does not exist" not in str(e) or cfg["target"] not in str(e):
+                messagebox.showerror(TITLE, f"Cannot read {cfg['target']}:\n\n{e}")
+                return
+            if not messagebox.askyesno(TITLE, f'Database "{cfg["target"]}" does not exist on {cfg["host"]}.\n\n'
+                                              "Create it now (empty) and upload into it?"):
+                return
+            try:
+                runner.psql_scalar("postgres", f"CREATE DATABASE \"{cfg['target']}\" ENCODING 'UTF8' "
+                                               "TEMPLATE template0")
+                state = runner.metadata_state()
+            except (StepFailed, OSError, ValueError) as e2:
+                messagebox.showerror(TITLE, f"Cannot create database {cfg['target']}:\n\n{e2}")
+                return
+        if state["metadata"] == "other":
+            messagebox.showerror(TITLE, f'"{metadata_upload.TABLE}" in {cfg["target"]} exists but is not an upload '
+                                        'table (no "Source" column). Rename or drop it first, or use Recreate.')
+            return
+        if not messagebox.askyesno(TITLE, f"Upload the .xlsx / .csv files of\n{folder}\ninto {cfg['target']}."
+                                            f'"{metadata_upload.TABLE}"?\n\n'
+                                            "Files already loaded are skipped; the others load one by one, "
+                                            "each all or nothing."):
+            return
+        self._mu_run(cfg, False, True)
+
+    def _mu_stop_now(self):
+        self.mu_stop.set()
+        proc = getattr(self.runner, "mu_proc", None)
+        if proc:
+            proc.kill()
+        self.mu_stop_btn.configure(state="disabled")
+
+    def _mu_forget(self):
+        rels = [self.mu_tree.item(i, "text") for i in self.mu_tree.selection()]
+        if not rels:
+            messagebox.showinfo(TITLE, "Select the files to load again in the list first.")
+            return
+        cfg = self._mu_cfg()
+        if not cfg or not messagebox.askyesno(TITLE, f"Mark {len(rels):,} file(s) as not loaded?\n\n"
+                                                     "The next Start upload loads them again (their rows in "
+                                                     f"{metadata_upload.TABLE} are replaced then)."):
+            return
+        try:
+            runner = Runner(cfg, self.queue)
+            if runner.metadata_state()["log"] is not None:
+                runner.psql_scalar(cfg["target"], metadata_upload.forget_sql(rels))
+        except (StepFailed, OSError, ValueError) as e:
+            messagebox.showerror(TITLE, str(e))
+            return
+        self._mu_refresh()
+
+    def _mu_recreate(self):
+        cfg = self._mu_cfg()
+        if not cfg or not messagebox.askyesno(TITLE, f'DROP "{metadata_upload.TABLE}" and '
+                                                     f'"{metadata_upload.LOG_TABLE}" in {cfg["target"]} and create '
+                                                     "them new and empty?\n\nEvery uploaded row is lost; the next "
+                                                     "Start upload loads all files again. This cannot be undone.",
+                                              icon="warning"):
+            return
+        self._mu_run(cfg, True, False)
+
     def _tick_all(self, on):
         self.checked = {r[0] for r in self.plan_rows} if on else set()
         for r in self.plan_rows:
             self.tree.set(r[0], "tick", "☑" if on else "☐")
+        self._update_space()
 
     def _tick_not_loaded(self):
         chosen = set(self.plan_sources) - self.db_off
         self.checked = {r[0] for r in self.plan_rows if (set(r[3].split(", ")) & chosen) - set(r[7].split(", "))}
         for r in self.plan_rows:
             self.tree.set(r[0], "tick", "☑" if r[0] in self.checked else "☐")
+        self._update_space()
 
     def _refresh(self, quiet=False):
         try:
@@ -2116,6 +3286,9 @@ class App(tk.Tk):
         except (StepFailed, OSError) as e:
             if not quiet:
                 messagebox.showerror(TITLE, f"Cannot read the table list:\n\n{e}")
+            return
+        if self.plan_rows:
+            self._check_space()
 
     # ---------- actions ----------
     def _config(self):
@@ -2150,6 +3323,31 @@ class App(tk.Tk):
             if n and n not in names:
                 names.append(n)
         return names
+
+    def _mark_db_line(self):
+        self.db_text.tag_remove("current_db", "1.0", "end")
+        line = self.db_text.index("insert").split(".")[0]
+        if self.db_text.get(f"{line}.0", f"{line}.end").strip():
+            self.db_text.tag_add("current_db", f"{line}.0", f"{line}.end+1c")
+
+    def _move_db(self, delta):
+        """Swap the source on the cursor's line with the one above (-1) or below (+1).
+        Blank lines are dropped so the list order is exactly the priority order."""
+        cur = self.db_text.get(f"insert linestart", f"insert lineend").strip()
+        names = [l.strip() for l in self.db_text.get("1.0", "end").splitlines() if l.strip()]
+        if not cur or cur not in names:
+            return
+        i = names.index(cur)
+        j = i + delta
+        if not 0 <= j < len(names):
+            return
+        names[i], names[j] = names[j], names[i]
+        self.db_text.delete("1.0", "end")
+        self.db_text.insert("1.0", "\n".join(names))
+        self.db_text.mark_set("insert", f"{j + 1}.0")
+        self.db_text.see("insert")
+        self.db_text.focus_set()
+        self._mark_db_line()
 
     def _load_dbs(self):
         try:
@@ -2236,7 +3434,7 @@ class App(tk.Tk):
         for b in self.job_btns:
             b.configure(state="disabled")
         self.status.configure(text="Running...")
-        runner = Runner(cfg, self.queue)
+        self.runner = runner = Runner(cfg, self.queue)
         threading.Thread(target=runner.run, args=(getattr(runner, job_name), *args), daemon=True).start()
 
     def _step1(self):
@@ -2337,8 +3535,15 @@ class App(tk.Tk):
         if p["lost"]:
             lines.append("\nRows REMOVED by the reload, because these databases are not ticked (copy them again later):\n  "
                          + "\n  ".join(f"{t}: {', '.join(v)}" for t, v in p["lost"].items()))
+        short = False
+        if self.space:
+            _, detail, short = self._space_report(p["copies"])
+            lines.append("\n" + "\n".join(detail))
+        else:
+            lines.append("\nDisk space not checked yet: click Check space to see it first.")
         lines.append("\nContinue?")
-        if not messagebox.askyesno(TITLE, "\n".join(lines), icon="warning" if p["reload"] else "question"):
+        if not messagebox.askyesno(TITLE, "\n".join(lines), icon="warning" if p["reload"] or short else "question",
+                                   default="no" if short else "yes"):
             return
         self._launch("step2", p["copies"], sorted(p["reload"]), p["holds"], cfg=cfg)
 
@@ -2373,6 +3578,40 @@ class App(tk.Tk):
             return
         self._launch("matrix", cfg=cfg)
 
+    def _verify_counts(self):
+        if self.running:
+            return
+        try:
+            cfg = self._config()
+        except ValueError as e:
+            messagebox.showerror(TITLE, str(e))
+            return
+        ticked = set(self.checked)  # read-only job: keep the table ticks
+
+        def finished():
+            self.checked |= ticked
+
+        self.after_done = finished
+        self._launch("verify_counts", cfg=cfg)
+
+    def _restore_skipped(self):
+        if self.running:
+            return
+        try:
+            cfg = self._config()
+        except ValueError as e:
+            messagebox.showerror(TITLE, str(e))
+            return
+        if not messagebox.askyesno(TITLE, f"Insert the duplicate files that were skipped into {cfg['target']}?\n\n"
+                                          "Every copy of a duplicate file is added, with its Metadata, Permissions and "
+                                          "MigrationTasks, tagged with its source_db. Nothing already copied is deleted "
+                                          "or changed. Files.OriginalSharePointPath is no longer unique afterwards "
+                                          "(the unique key becomes a plain index).\n\n"
+                                          "If Finish already removed the sources, the tables needed are linked / "
+                                          "copied again first."):
+            return
+        self._launch("restore_skipped", cfg=cfg)
+
     def _detach(self):
         if self.running:
             return
@@ -2395,6 +3634,18 @@ class App(tk.Tk):
                 if kind == "text":
                     self.log.insert("end", data + "\n")
                     self.log.see("end")
+                elif kind == "space":
+                    seq, space = data
+                    if seq == self.space_seq:
+                        self.space = space
+                        self._show_sizes()
+                        self._update_space()
+                        d = space["disk"]
+                        self.log.insert("end", "Space check: " + (f"{fmt_size(d['free'])} free, read through {d['how']}"
+                                        if d["free"] is not None else f"free disk not detected: {d['why']}")
+                                        + "".join(f"\n  sizes not read from {n}: {e}" for n, e in space["errors"].items())
+                                        + "\n")
+                        self.log.see("end")
                 elif kind == "compare":
                     if not self.running:
                         self.status.configure(text=f"psql: {find_psql()}")
@@ -2428,8 +3679,16 @@ class App(tk.Tk):
                     (messagebox.showinfo if kind == "info" else messagebox.showerror)(TITLE, data)
                 elif kind == "step":
                     self.status.configure(text=f"Running: {data}")
+                elif kind == "mu_row":
+                    self._mu_set(*data)
+                elif kind == "mu_scan":
+                    self._mu_show(*data)
                 elif kind == "done":
                     self.running = False
+                    if self.mu_active:
+                        self.mu_active = False
+                        self.mu_stop_btn.configure(state="disabled")
+                        self.after(200, self._mu_refresh)
                     for b in self.job_btns:
                         b.configure(state="normal")
                     self.status.configure(text="Finished OK" if data == "ok" else "FAILED - see log")
@@ -2445,4 +3704,6 @@ class App(tk.Tk):
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()  # "Build upload files" runs worker processes (the exe starts itself again)
     App().mainloop()

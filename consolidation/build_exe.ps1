@@ -30,7 +30,8 @@ foreach ($f in 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll') {
 & python -m PyInstaller --noconfirm --clean --onefile --windowed `
     --name MtrDbMigration `
     --distpath (Join-Path $here 'dist') --workpath (Join-Path $here 'build\pyi') --specpath (Join-Path $here 'build') `
-    --paths $here --paths (Join-Path $here '..\metadata_horizontal') `
+    --paths $here --paths (Join-Path $here '..\metadata_horizontal') --paths (Join-Path $here '..') `
+    --add-data "$(Join-Path $here '..\metadata_horizontal\config.json');metadata_horizontal" `
     --add-data "$(Join-Path $here 'sql');consolidation\sql" `
     --add-data "$(Join-Path $here 'sources.json');consolidation" `
     --add-data "$stage;pgbin" `

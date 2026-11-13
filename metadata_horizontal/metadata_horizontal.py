@@ -324,15 +324,21 @@ CREATE TEMP TABLE mh_stage (
 """
 
 
-def import_file(engine, cfg, path, sheet=None, log=print, progress=None, report_dir=None):
+def _safe_name(text_):
+    """A relative path as one file name."""
+    return text_.replace("\\", "_").replace("/", "_").replace(":", "_")
+
+
+def import_file(engine, cfg, path, sheet=None, log=print, progress=None, report_dir=None, source_name=None):
     """Upload one CSV/XLSX. Returns a stats dict."""
     t0 = time.time()
+    name = source_name or os.path.basename(path)
     headers, rows = read_rows(path, sheet)
     horiz, ignored, ids = classify_headers(headers, cfg)
     if not any(n in ids for n in ("FileId", "UniqueId", "FileRef", "OriginalSharePointPath")):
         raise ValueError("The file needs at least one of these columns to find the file: "
                          "FileId, UniqueId, FileRef, OriginalSharePointPath")
-    log(f"{os.path.basename(path)}: {len(headers)} columns -> {len(horiz)} horizontal, "
+    log(f"{name}: {len(headers)} columns -> {len(horiz)} horizontal, "
         f"{len(ignored)} ignored/identity")
     missing = sorted(set(cfg.columns) - set(horiz.values()))
     if missing:
@@ -452,7 +458,7 @@ def import_file(engine, cfg, path, sheet=None, log=print, progress=None, report_
                 FROM mh_stage s JOIN public."Files" f ON f."FileId" = s.file_id
                 ON CONFLICT ("FileId") DO UPDATE SET {upd},
                     "SiteName" = EXCLUDED."SiteName", "SourceFile" = EXCLUDED."SourceFile",
-                    "UpdatedAt" = CURRENT_TIMESTAMP""", (*present, os.path.basename(path)[:1000]))
+                    "UpdatedAt" = CURRENT_TIMESTAMP""", (*present, name[:1000]))
             stats["horizontal_rows"] = cur.rowcount
 
         # ---- Metadata: remove the configured keys present in this file ------
@@ -469,7 +475,7 @@ def import_file(engine, cfg, path, sheet=None, log=print, progress=None, report_
         if stats["unmatched"]:
             report_dir = report_dir or os.path.join(BASE_DIR, "logs")
             os.makedirs(report_dir, exist_ok=True)
-            rpt = os.path.join(report_dir, f"unmatched_{os.path.splitext(os.path.basename(path))[0]}_"
+            rpt = os.path.join(report_dir, f"unmatched_{_safe_name(os.path.splitext(name)[0])}_"
                                             f"{datetime.now():%Y%m%d_%H%M%S}.csv")
             cur.execute("SELECT row_no, file_id_in, unique_id, file_ref, orig_path FROM mh_stage "
                         "WHERE file_id IS NULL ORDER BY row_no")
@@ -491,6 +497,56 @@ def import_file(engine, cfg, path, sheet=None, log=print, progress=None, report_
     log(f"Done: {stats['horizontal_rows']:,} horizontal rows upserted, "
         f"{stats['vertical_deleted']:,} old Metadata rows of those keys removed  [{stats['seconds']}s]")
     return stats
+
+
+def csv_files(folder):
+    """Every .csv under folder, subfolders included, sorted by path (a later scan of a library comes last)."""
+    found = [os.path.join(d, n) for d, _, names in os.walk(folder) for n in names
+             if os.path.splitext(n)[1].lower() == ".csv"]
+    return sorted(found)
+
+
+def import_folder(engine, cfg, folder, log=print, progress=None, report_dir=None):
+    """Upload every CSV under a folder, one transaction per file. A file that fails is rolled back and listed,
+    and the others still load. If two files hold the same file, the one uploaded last wins.
+    progress gets (total rows read, file number, file count, file). Returns a stats dict."""
+    t0 = time.time()
+    root = os.path.abspath(folder)
+    files = csv_files(root)
+    if not files:
+        raise ValueError(f"No .csv files found in {root}")
+    report_dir = report_dir or os.path.join(BASE_DIR, "logs")
+    reports = os.path.join(report_dir, f"unmatched_{os.path.basename(root)}_{datetime.now():%Y%m%d_%H%M%S}")
+    totals = dict(files=len(files), files_failed=0, rows_read=0, folders_skipped=0, versions_skipped=0, staged=0,
+                  matched=0, unmatched=0, horizontal_rows=0, vertical_deleted=0, duplicates=0)
+    failed = []
+    for i, path in enumerate(files, 1):
+        rel = os.path.relpath(path, root)
+        log(f"File {i} of {len(files)}: {rel}")
+        base = totals["rows_read"]
+        step = (lambda n, i=i, rel=rel, base=base: progress(base + n, i, len(files), rel)) if progress else None
+        try:
+            one = import_file(engine, cfg, path, log=log, progress=step, report_dir=reports, source_name=rel)
+            for k in totals:
+                if k in one:
+                    totals[k] += one[k]
+        except Exception as e:
+            totals["files_failed"] += 1
+            failed.append(rel)
+            log(f"FAILED, nothing changed for this file: {rel}: {e}")
+    if totals["unmatched"]:
+        totals["unmatched_reports"] = reports
+    totals["failed"] = failed
+    totals["seconds"] = round(time.time() - t0, 1)
+    log(f"Folder done: {totals['files'] - totals['files_failed']:,} of {totals['files']:,} files loaded, "
+        f"{totals['matched']:,} rows matched, {totals['unmatched']:,} unmatched, "
+        f"{totals['horizontal_rows']:,} horizontal rows upserted, "
+        f"{totals['vertical_deleted']:,} old Metadata rows of those keys removed  [{totals['seconds']}s]")
+    if totals["unmatched"]:
+        log(f"Unmatched rows are in {reports}")
+    if failed:
+        log("Files that failed: " + "; ".join(failed))
+    return totals
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +630,7 @@ def main(argv=None):
     import argparse
     p = argparse.ArgumentParser(description="Horizontal metadata table tool")
     p.add_argument("command", choices=["ensure", "upload", "convert", "ddl", "matrix"])
-    p.add_argument("file", nargs="?", help="CSV/XLSX for upload")
+    p.add_argument("file", nargs="?", help="CSV/XLSX, or a folder of CSVs, for upload")
     p.add_argument("--sheet")
     p.add_argument("--keep-vertical", action="store_true", help="convert: do not delete moved keys from Metadata")
     p.add_argument("--config", default=CONFIG_FILE)
@@ -591,7 +647,11 @@ def main(argv=None):
     elif a.command == "upload":
         if not a.file:
             p.error("upload needs a file")
-        import_file(engine, cfg, a.file, sheet=a.sheet)
+        if os.path.isdir(a.file):
+            if import_folder(engine, cfg, a.file)["files_failed"]:
+                return 1
+        else:
+            import_file(engine, cfg, a.file, sheet=a.sheet)
     elif a.command == "convert":
         convert_existing(engine, cfg, remove_from_vertical=not a.keep_vertical)
     elif a.command == "matrix":

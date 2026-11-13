@@ -15,6 +15,7 @@ support; login is NTLM/Kerberos as the Windows user, or a DOMAIN\user + password
 Columns:
     OriginalSharePointPath  https://host + FileRef (identity for Upload)
     UniqueId, FileRef, FileLeafRef, FileDirRef, FSObjType
+    LibraryTitle, LibraryId title and list GUID of the file's document library
     then every field of the libraries by InternalName (the union over all
     libraries, in first-seen order), hidden and Computed fields included.
 Values: the text SharePoint shows (people -> display names, lookups / managed
@@ -36,7 +37,7 @@ Add-Type -AssemblyName Microsoft.VisualBasic
 
 $script:Inv = [Globalization.CultureInfo]::InvariantCulture
 $script:PageSize = 500
-$script:FrontColumns = @('OriginalSharePointPath', 'UniqueId', 'FileRef', 'FileLeafRef', 'FileDirRef', 'FSObjType')
+$script:FrontColumns = @('OriginalSharePointPath', 'UniqueId', 'FileRef', 'FileLeafRef', 'FileDirRef', 'FSObjType', 'LibraryTitle', 'LibraryId')
 $script:AlwaysFields = @('Title', 'ContentType', 'Created', 'Modified', 'Author', 'Editor', '_UIVersionString', 'CheckoutUser')
 # limits of one extra-pass request: query length (SharePoint's default is 2048) and lookups (its threshold is 8)
 $script:GroupMaxChars = 1500
@@ -53,7 +54,7 @@ $script:HiddenDates = @('Created_x0020_Date', 'Last_x0020_Modified')
 $script:ExcelMaxRows = 1048576
 $script:LibColumnsSheet = 'Library columns'
 $script:LibColumnsHeader = @('SiteUrl', 'SiteTitle', 'LibraryTitle', 'LibraryFolder', 'InternalName', 'FieldTitle', 'FieldType', 'Hidden', 'Exported')
-$script:ExportOnlyColumns = @('OriginalSharePointPath')    # written by Export-SpMetadata, not a SharePoint field
+$script:ExportOnlyColumns = @('OriginalSharePointPath', 'LibraryTitle', 'LibraryId')    # written by Export-SpMetadata, not a SharePoint field
 $script:ExcelMaxText = 32767
 $script:RowByRowBytes = 200MB                          # Upload and Compare read an xlsx row by row from this size (unzipped); EPPlus stops near 2 GB and needs far more memory
 $script:WorkFolderName = 'sharepoint_export_work'     # next to the output file, while an export runs
@@ -541,7 +542,157 @@ internal sealed class SpReader : IDisposable {
 // Reads one sheet of an .xlsx row by row, straight from the zip, so a sheet of any size fits. Gives the same text
 // as Upload and Compare get from EPPlus: numbers as stored (a date cell is its serial number), whole numbers without decimals, TRUE as True.
 public sealed class SpCompareColumns {
-    public string[] Ids; public string[] Refs; public string[] Types; public bool[][] Has; public List<int>[] Rows;
+    public string[] Ids; public string[] Refs; public string[] Types; public bool[][] Has; public List<int>[] Rows; public long[][] Keys;
+}
+
+// One cell value as a 64-bit key, so the values of a big workbook fit in memory:
+//   0                  empty
+//   DateFlag | ticks   a date/time (the text as written, no time zone applied)
+//   bit 63 | canonical hash (30 bits) << 32 | exact hash (32 bits)   anything else
+// "canonical" ignores what two scanners write differently for the same value: case, spaces,
+// True/Yes, 1.0/1, claims prefixes (i:0#.w|), lookup ids (12;#Name) and ;# separators.
+public static class SpValue {
+    public const int Same = 0, SameFormat = 1, SameTimeZone = 2, BlankXlsx = 3, BlankCsv = 4, Different = 5, Kinds = 6;
+    public static readonly string[] Names = { "Same", "Same, other format", "Same time, other time zone", "Blank in xlsx", "Blank in CSV", "Different" };
+    const long DateFlag = 1L << 62;
+    const long TickMask = DateFlag - 1;
+    static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+    static readonly string[] DateFormats = {
+        "yyyy-MM-dd HH:mm:ss", "yyyy-MM-ddTHH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-ddTHH:mm", "yyyy-MM-dd",
+        "yyyy/MM/dd HH:mm:ss", "yyyy/MM/dd H:mm:ss", "yyyy/MM/dd HH:mm", "yyyy/MM/dd",
+        "yyyy-MM-dd HH:mm:ss.fff", "yyyy-MM-ddTHH:mm:ss.fff", "yyyy-MM-ddTHH:mm:ss.fffffff",
+        "M/d/yyyy h:mm:ss tt", "M/d/yyyy H:mm:ss", "M/d/yyyy H:mm", "M/d/yyyy", "d/M/yyyy H:mm:ss" };
+    static readonly Regex Claims = new Regex(@"^i:0[#.][a-z+]\|", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    static readonly Regex LookupId = new Regex(@"(^|;#)\d+;#", RegexOptions.CultureInvariant);
+    static readonly Regex Spaces = new Regex(@"\s+", RegexOptions.CultureInvariant);
+    static readonly Regex Thousands = new Regex(@"^-?\d{1,3}(,\d{3})+(\.\d+)?$", RegexOptions.CultureInvariant);
+
+    public static long Key(string s) {
+        if (s == null) return 0;
+        string t = s.Trim();
+        if (t.Length == 0) return 0;
+        long ticks;
+        if (TryDate(t, out ticks)) return DateFlag | ticks;
+        uint canon = Hash(Canonical(t)) & 0x3FFFFFFF;
+        return long.MinValue | ((long)canon << 32) | (long)Hash(t);
+    }
+
+    public static long[] Keys(string[] values) {
+        long[] k = new long[values.Length];
+        for (int i = 0; i < values.Length; i++) k[i] = Key(values[i]);
+        return k;
+    }
+
+    static bool TryDate(string t, out long ticks) {
+        ticks = 0;
+        if (t.Length < 8 || t.Length > 30 || !char.IsDigit(t[0])) return false;
+        string u = t.EndsWith("Z") || t.EndsWith("z") ? t.Substring(0, t.Length - 1) : t;
+        DateTime d;
+        if (!DateTime.TryParseExact(u, DateFormats, Inv, DateTimeStyles.None, out d)) return false;
+        ticks = d.Ticks;
+        return true;
+    }
+
+    static string Canonical(string t) {
+        string c = Claims.Replace(t, "");
+        if (c.IndexOf(";#", StringComparison.Ordinal) >= 0) {
+            c = LookupId.Replace(c, "$1");
+            string[] parts = c.Split(new string[] { ";#" }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < parts.Length; i++) parts[i] = parts[i].Trim();
+            c = string.Join(";", parts);
+        }
+        c = Spaces.Replace(c, " ").Trim().ToLowerInvariant();
+        if (c == "true" || c == "yes") return "1";
+        if (c == "false" || c == "no") return "0";
+        decimal num;
+        if (Thousands.IsMatch(c)) c = c.Replace(",", "");               // 1,440 -> 1440
+        if (c.Length < 30 && decimal.TryParse(c, NumberStyles.Float, Inv, out num)) return num.ToString("G29", Inv);
+        c = c.Replace("; ", ";");
+        return c;
+    }
+
+    static uint Hash(string s) {                     // FNV-1a
+        uint h = 2166136261;
+        for (int i = 0; i < s.Length; i++) { h ^= s[i]; h *= 16777619; }
+        return h;
+    }
+
+    public static bool IsDate(long k) { return k > 0 && (k & DateFlag) != 0; }
+
+    // how the CSV value compares with the xlsx value; -1 when both are empty. shift: xlsx minus CSV, in minutes, for SameTimeZone.
+    public static int Classify(long csv, long xlsx, out int shift) {
+        shift = 0;
+        if (csv == 0 && xlsx == 0) return -1;
+        if (csv == 0) return BlankCsv;
+        if (xlsx == 0) return BlankXlsx;
+        if (csv == xlsx) return Same;
+        bool dc = IsDate(csv), dx = IsDate(xlsx);
+        if (dc && dx) {
+            long diff = (xlsx & TickMask) - (csv & TickMask);
+            long quarter = TimeSpan.TicksPerMinute * 15;
+            if (diff % quarter == 0 && Math.Abs(diff) <= TimeSpan.TicksPerHour * 14) { shift = (int)(diff / TimeSpan.TicksPerMinute); return SameTimeZone; }
+            return Different;
+        }
+        if (!dc && !dx && ((csv >> 32) & 0x3FFFFFFF) == ((xlsx >> 32) & 0x3FFFFFFF)) return SameFormat;
+        return Different;
+    }
+}
+
+public sealed class SpValueDiff {
+    public int Kind; public int Col; public int Lib; public int Raw; public long Line; public string File; public string Ref; public string Csv; public string Xlsx;
+}
+
+// The value check of one compare: counts per column and per library, and a capped list of cells that differ.
+public sealed class SpValueCompare {
+    public readonly string[] Names;          // the compared columns
+    public readonly long[][] Wb;             // per column: the workbook key of each workbook row
+    public readonly long[,] Totals;          // [column, kind]
+    public readonly Dictionary<int, long[,]> ByLib = new Dictionary<int, long[,]>();
+    public readonly Dictionary<int, int>[] Shifts;   // per column: minutes -> cells
+    public readonly List<SpValueDiff> Diffs = new List<SpValueDiff>();
+    public readonly int[] Listed;            // per column: cells in Diffs
+    public long Skipped;                     // differing cells not listed (caps)
+    public int MaxPerColumn = 2000, MaxTotal = 200000;
+
+    public SpValueCompare(string[] names, long[][] wb) {
+        Names = names; Wb = wb;
+        Totals = new long[names.Length, SpValue.Kinds];
+        Shifts = new Dictionary<int, int>[names.Length];
+        for (int j = 0; j < names.Length; j++) Shifts[j] = new Dictionary<int, int>();
+        Listed = new int[names.Length];
+    }
+
+    // csvIdx[j]: the position of column j in this CSV, or -1
+    public void Row(string[] f, int[] csvIdx, int raw, int lib, string fileRef, string file, long line) {
+        long[,] mine;
+        if (!ByLib.TryGetValue(lib, out mine)) { mine = new long[Names.Length, SpValue.Kinds]; ByLib[lib] = mine; }
+        for (int j = 0; j < Names.Length; j++) {
+            int c = csvIdx[j];
+            if (c < 0) continue;
+            string text = c < f.Length ? f[c] : "";
+            int shift;
+            int k = SpValue.Classify(SpValue.Key(text), Wb[j][raw], out shift);
+            if (k < 0) continue;
+            Totals[j, k]++; mine[j, k]++;
+            if (k == SpValue.SameTimeZone) { int n; Shifts[j].TryGetValue(shift, out n); Shifts[j][shift] = n + 1; }
+            if (k >= SpValue.BlankXlsx) {
+                if (Listed[j] < MaxPerColumn && Diffs.Count < MaxTotal) {
+                    SpValueDiff d = new SpValueDiff(); d.Kind = k; d.Col = j; d.Lib = lib; d.Raw = raw; d.Line = line; d.File = file; d.Ref = fileRef; d.Csv = text;
+                    Diffs.Add(d); Listed[j]++;
+                } else Skipped++;
+            }
+        }
+    }
+
+    // "xlsx +8h (100%)": the most common time shift of a column
+    public string ShiftText(int j) {
+        int best = 0, bestN = 0, all = 0;
+        foreach (KeyValuePair<int, int> p in Shifts[j]) { all += p.Value; if (p.Value > bestN) { best = p.Key; bestN = p.Value; } }
+        if (all == 0) return "";
+        string h = (best % 60 == 0) ? (best / 60).ToString("+0;-0", Inv) + "h" : (best / 60.0).ToString("+0.##;-0.##", Inv) + "h";
+        return "xlsx " + h + " (" + (100.0 * bestN / all).ToString("0", Inv) + "%)";
+    }
+    static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 }
 
 public sealed class SpSheetReader : IDisposable {
@@ -747,11 +898,15 @@ public sealed class SpSheetReader : IDisposable {
     }
 
     // what Compare needs of every remaining row. keep: the columns to record which rows have a value.
-    public SpCompareColumns ReadCompare(int width, int iId, int iRef, int iType, int[] keep, Action<long> progress) {
+    // valueCols (may be empty): the columns whose values are compared; each cell is kept as an SpValue key (8 bytes).
+    public SpCompareColumns ReadCompare(int width, int iId, int iRef, int iType, int[] keep, int[] valueCols, Action<long> progress) {
         List<string> ids = new List<string>(), refs = new List<string>(), types = new List<string>();
         List<bool>[] has = new List<bool>[keep.Length];
         List<int>[] rows = new List<int>[keep.Length];
         for (int j = 0; j < keep.Length; j++) { has[j] = new List<bool>(); rows[j] = new List<int>(); }
+        if (valueCols == null) valueCols = new int[0];
+        List<long>[] keys = new List<long>[valueCols.Length];
+        for (int j = 0; j < valueCols.Length; j++) keys[j] = new List<long>();
         int n = 0;
         string[] r;
         while ((r = ReadRow(width)) != null) {
@@ -763,6 +918,7 @@ public sealed class SpSheetReader : IDisposable {
                 has[j].Add(on);
                 if (on) rows[j].Add(n);
             }
+            for (int j = 0; j < valueCols.Length; j++) keys[j].Add(SpValue.Key(r[valueCols[j]]));
             n++;
             if (progress != null && n % 5000 == 0) progress(n);
         }
@@ -770,7 +926,29 @@ public sealed class SpSheetReader : IDisposable {
         c.Ids = ids.ToArray(); c.Refs = refs.ToArray(); c.Types = types.ToArray(); c.Rows = rows;
         c.Has = new bool[keep.Length][];
         for (int j = 0; j < keep.Length; j++) { c.Has[j] = has[j].ToArray(); has[j] = null; }
+        c.Keys = new long[valueCols.Length][];
+        for (int j = 0; j < valueCols.Length; j++) { c.Keys[j] = keys[j].ToArray(); keys[j] = null; }
         return c;
+    }
+
+    // the text of some cells, read again row by row: wanted row (as counted by ReadCompare) -> values of cols.
+    // Call right after the header row was read. Stops after the last wanted row.
+    public Dictionary<int, string[]> ReadRowsAt(int width, ICollection<int> wanted, int[] cols) {
+        Dictionary<int, string[]> out1 = new Dictionary<int, string[]>();
+        HashSet<int> want = new HashSet<int>(wanted);
+        int last = -1;
+        foreach (int w in want) if (w > last) last = w;
+        int n = 0;
+        string[] r;
+        while (n <= last && (r = ReadRow(width)) != null) {
+            if (want.Contains(n)) {
+                string[] v = new string[cols.Length];
+                for (int j = 0; j < cols.Length; j++) v[j] = cols[j] >= 0 && cols[j] < r.Length ? r[cols[j]] : "";
+                out1[n] = v;
+            }
+            n++;
+        }
+        return out1;
     }
 
     public void Dispose() {
@@ -869,7 +1047,7 @@ public static class SpEngine {
     }
 
     // ---- reading: one page of the main pass
-    public static void AddMainPage(SpPass pass, IEnumerable results, string authority, SpPick[] picks) {
+    public static void AddMainPage(SpPass pass, IEnumerable results, string authority, SpPick[] picks, int libraryCol, string libraryTitle, int libraryIdCol, string libraryId) {
         if (results == null) return;
         foreach (object o in results) {
             IDictionary it = (IDictionary)o;
@@ -883,6 +1061,8 @@ public static class SpEngine {
             Put(pass, 3, FormatValue(it["FileLeafRef"]));
             Put(pass, 4, FormatValue(it["FileDirRef"]));
             Put(pass, 5, FormatValue(it["FSObjType"]));
+            if (libraryCol >= 0) Put(pass, libraryCol, libraryTitle);
+            if (libraryIdCol >= 0) Put(pass, libraryIdCol, libraryId);
             foreach (SpPick p in picks) {
                 string v;
                 if (p.Date && it.Contains(p.Raw)) v = FormatDate(it[p.Raw]);
@@ -1345,6 +1525,9 @@ function Export-SpMetadata {
 
             # main pass
             $mainPicks = [MetadataHorizontal.SpPick[]]@(foreach ($p in @($plan.Picks)) { if ($p) { [MetadataHorizontal.SpEngine]::MainPick([int]$p.Index, [string]$p.Text, [string]$p.Raw, [bool]$p.Date) } })
+            # -1 when continuing an export whose saved plan does not have these columns
+            $libraryCol = [array]::IndexOf([string[]]@($plan.Columns), 'LibraryTitle')
+            $libraryIdCol = [array]::IndexOf([string[]]@($plan.Columns), 'LibraryId')
             $pass = New-Object MetadataHorizontal.SpPass($plan.Main)
             try {
                 $url = if ($pass.NextUrl) { $pass.NextUrl } else {
@@ -1354,7 +1537,7 @@ function Export-SpMetadata {
                 while (-not $pass.Done) {
                     if (-not $readClock) { $readClock = [Diagnostics.Stopwatch]::StartNew(); $readBase = ($doneWeight + $libWeight * [Math]::Min(1.0, $pass.Items / $libItems) / $passes) / [Math]::Max(1.0, $totalItems + $libCount) }
                     $d = Invoke-SpGet $Sp $url
-                    [MetadataHorizontal.SpEngine]::AddMainPage($pass, $d['results'], $authority, $mainPicks)
+                    [MetadataHorizontal.SpEngine]::AddMainPage($pass, $d['results'], $authority, $mainPicks, $libraryCol, [string]$lib.Title, $libraryIdCol, [string]$lib.Id)
                     $url = [string]$d['__next']
                     $pass.Checkpoint($url)
                     & $report ([Math]::Min(1.0, $pass.Items / $libItems) / $passes) "step 1 of $passes`: $($pass.Items.ToString('N0', $script:Inv)) of $itemText items"
@@ -1564,8 +1747,9 @@ function Find-SpLibByRef($Libraries, [string] $Ref) {
     return $null
 }
 
-function Read-SpBigCompareWorkbook([string] $Path, [scriptblock] $Progress) {
-    <# Read-SpCompareWorkbook for a big .xlsx: row by row, no copy of the sheet in memory. #>
+function Read-SpBigCompareWorkbook([string] $Path, [scriptblock] $Progress, [string[]] $ValueColumns) {
+    <# Read-SpCompareWorkbook for a big .xlsx: row by row, no copy of the sheet in memory.
+       Values are kept as 8-byte keys only; Get-SpWorkbookText reads the text of the cells that differ. #>
     $need = 'UniqueId or FileRef'
     $r = Open-SpSheetReader $Path ''
     try {
@@ -1575,10 +1759,13 @@ function Read-SpBigCompareWorkbook([string] $Path, [scriptblock] $Progress) {
         if (-not ($ix.ContainsKey('UniqueId') -or $ix.ContainsKey('FileRef'))) { throw "Sheet '$($r.SheetName)' has no $need column" }
         $names = [string[]]@($ix.Keys)
         $keep = [int[]]@($names | ForEach-Object { $ix[$_] })
+        $vNames = [string[]]@($ValueColumns | Where-Object { $_ -and $ix.ContainsKey($_) })
+        $vCols = [int[]]@($vNames | ForEach-Object { $ix[$_] })
         $at = { param($n) if ($ix.ContainsKey($n)) { [int]$ix[$n] } else { -1 } }
         $tick = [Action[long]] { param([long] $rowsDone) if ($Progress) { & $Progress $rowsDone 'workbook' } }
-        $d = $r.ReadCompare($headers.Length, (& $at 'UniqueId'), (& $at 'FileRef'), (& $at 'FSObjType'), $keep, $tick)
-        $out = @{ Columns = @($names); Ids = $d.Ids; Refs = $d.Refs; Types = $d.Types; Cells = @{} }
+        $d = $r.ReadCompare($headers.Length, (& $at 'UniqueId'), (& $at 'FileRef'), (& $at 'FSObjType'), $keep, $vCols, $tick)
+        $out = @{ Columns = @($names); Ids = $d.Ids; Refs = $d.Refs; Types = $d.Types; Cells = @{}
+                  ValueNames = $vNames; ValueKeys = $d.Keys; ValueText = $null; Path = $Path; Width = $headers.Length; ValueCols = $vCols }
         for ($j = 0; $j -lt $names.Length; $j++) { $out.Cells[$names[$j]] = @{ Has = $d.Has[$j]; Rows = $d.Rows[$j] } }
     } finally { $r.Dispose() }
     if ([MetadataHorizontal.SpSheetReader]::HasSheet($Path, $script:LibColumnsSheet)) {
@@ -1601,11 +1788,14 @@ function Read-SpBigCompareWorkbook([string] $Path, [scriptblock] $Progress) {
     return $out
 }
 
-function Read-SpCompareWorkbook([string] $Path, [scriptblock] $Progress) {
+function Read-SpCompareWorkbook([string] $Path, [scriptblock] $Progress, [string[]] $ValueColumns) {
     <# The combined export (.xlsx/.xlsm/.csv) -> @{ Columns; Ids; Refs; Types; Cells } with parallel arrays;
-       Cells: column name -> which rows have a value (see Read-SpSheetPresence). #>
+       Cells: column name -> which rows have a value (see Read-SpSheetPresence).
+       ValueColumns: columns whose values are compared -> ValueNames, ValueKeys (SpValue keys per row) and
+       ValueText (the text, for a workbook small enough to keep it; else $null). #>
     $need = 'UniqueId or FileRef'
     $ext = [IO.Path]::GetExtension($Path).ToLowerInvariant()
+    Initialize-SpEngine
     if ($ext -eq '.csv') {
         $ids = New-Object 'Collections.Generic.List[string]'
         $refs = New-Object 'Collections.Generic.List[string]'
@@ -1618,6 +1808,9 @@ function Read-SpCompareWorkbook([string] $Path, [scriptblock] $Progress) {
             $flags = @{}
             $lists = @{}
             foreach ($n in $ix.Keys) { $flags[$n] = New-Object 'Collections.Generic.List[bool]'; $lists[$n] = New-Object 'Collections.Generic.List[int]' }
+            $vNames = [string[]]@($ValueColumns | Where-Object { $_ -and $ix.ContainsKey($_) })
+            $vText = @{}
+            foreach ($n in $vNames) { $vText[$n] = New-Object 'Collections.Generic.List[string]' }
             $row = 0
             while (-not $p.EndOfData) {
                 $f = $p.ReadFields()
@@ -1630,15 +1823,20 @@ function Read-SpCompareWorkbook([string] $Path, [scriptblock] $Progress) {
                     $flags[$n].Add($on)
                     if ($on) { $lists[$n].Add($row) }
                 }
+                foreach ($n in $vNames) { $vText[$n].Add($(if ($ix[$n] -lt $f.Length) { $f[$ix[$n]] } else { '' })) }
                 $row++
             }
         } finally { $p.Dispose() }
         $cells = @{}
         foreach ($n in $ix.Keys) { $cells[$n] = @{ Has = $flags[$n].ToArray(); Rows = $lists[$n] } }
-        return @{ Columns = @($ix.Keys); Ids = $ids.ToArray(); Refs = $refs.ToArray(); Types = $types.ToArray(); Cells = $cells }
+        $text = @{}
+        foreach ($n in $vNames) { $text[$n] = $vText[$n].ToArray() }
+        return @{ Columns = @($ix.Keys); Ids = $ids.ToArray(); Refs = $refs.ToArray(); Types = $types.ToArray(); Cells = $cells
+                  ValueNames = $vNames; ValueKeys = [long[][]]@(foreach ($n in $vNames) { , [MetadataHorizontal.SpValue]::Keys($text[$n]) }); ValueText = $text }
     }
     if ($ext -ne '.xlsx' -and $ext -ne '.xlsm') { throw "Unsupported file type: $ext (use .xlsx or .csv)" }
-    if (Test-SpBigXlsx $Path) { return Read-SpBigCompareWorkbook $Path $Progress }
+    # row by row for a big sheet, and whenever values are compared: the same row numbering for keys and text
+    if ($ValueColumns -or (Test-SpBigXlsx $Path)) { return Read-SpBigCompareWorkbook $Path $Progress $ValueColumns }
     if (-not (Get-Module ImportExcel)) {
         if (-not (Get-Module -ListAvailable ImportExcel)) { throw 'Reading .xlsx needs the ImportExcel module (or use the .csv export).' }
         Import-Module ImportExcel
@@ -1669,6 +1867,71 @@ function Read-SpCompareWorkbook([string] $Path, [scriptblock] $Progress) {
     } finally { $stream.Dispose() }
 }
 
+function Get-SpWorkbookText($Wb, $Diffs) {
+    <# Fill .Xlsx of each SpValueDiff with the workbook's text: from memory for a .csv workbook, else one more pass over the sheet. #>
+    if (-not $Diffs.Count) { return }
+    if ($Wb.ValueText) {
+        foreach ($d in $Diffs) { $d.Xlsx = $Wb.ValueText[$Wb.ValueNames[$d.Col]][$d.Raw] }
+        return
+    }
+    $rows = New-Object 'Collections.Generic.HashSet[int]'
+    foreach ($d in $Diffs) { [void]$rows.Add($d.Raw) }
+    $r = Open-SpSheetReader $Wb.Path ''
+    try {
+        [void]$r.ReadRow(0)
+        $text = $r.ReadRowsAt($Wb.Width, $rows, [int[]]$Wb.ValueCols)
+    } finally { $r.Dispose() }
+    foreach ($d in $Diffs) { $v = $null; if ($text.TryGetValue($d.Raw, [ref]$v)) { $d.Xlsx = $v[$d.Col] } }
+}
+
+function Get-SpExportSites([string] $Path) {
+    <# The site URLs an .xlsx export covers, from its Library columns sheet (subsites included). Empty when it has none. #>
+    if ([IO.Path]::GetExtension($Path) -notmatch '^\.xls[xm]$') { return @() }
+    Initialize-SpEngine
+    if (-not [MetadataHorizontal.SpSheetReader]::HasSheet($Path, $script:LibColumnsSheet)) { return @() }
+    $sites = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $r = Open-SpSheetReader $Path $script:LibColumnsSheet
+    try {
+        $headers = $r.ReadRow(0)
+        if ($null -eq $headers) { return @() }
+        $ix = Get-SpHeaderIndex $headers
+        if (-not $ix.ContainsKey('SiteUrl')) { return @() }
+        while ($null -ne ($row = $r.ReadRow($headers.Length))) { if ($row[$ix['SiteUrl']]) { [void]$sites.Add($row[$ix['SiteUrl']].TrimEnd('/')) } }
+    } finally { $r.Dispose() }
+    return @($sites | Sort-Object)
+}
+
+function Find-SpCompareCsvs([string[]] $Sites, [string] $CsvFolder) {
+    <# The per-library CSVs below $CsvFolder that belong to these sites: a CSV belongs to a site when its folder path ends with
+       <host name>/<site path> (e.g. ...\ishare\partner\aro for http://ishare.mtr.com.hk/partner/ARO), else with <site path>.
+       Only the site's own folder counts, so a subsite exported to another file is left out.
+       -> @{ Files = FileInfo[]; Folders = matched folders; NoCsv = sites with no folder } #>
+    $all = @(Get-ChildItem -LiteralPath $CsvFolder -Recurse -File -Filter '*.csv')
+    $byDir = @{}
+    foreach ($f in $all) {
+        $k = $f.DirectoryName.Replace('\', '/').TrimEnd('/').ToLowerInvariant()
+        if (-not $byDir.ContainsKey($k)) { $byDir[$k] = New-Object 'Collections.Generic.List[object]' }
+        $byDir[$k].Add($f)
+    }
+    $files = New-Object 'Collections.Generic.List[object]'
+    $folders = New-Object 'Collections.Generic.List[string]'
+    $noCsv = New-Object 'Collections.Generic.List[string]'
+    foreach ($s in $Sites) {
+        $u = [Uri]$s
+        $path = [Uri]::UnescapeDataString($u.AbsolutePath).Trim('/').ToLowerInvariant()
+        $hostKey = (($u.Host.Split('.')[0] + '/' + $path).TrimEnd('/'))
+        $hit = @($byDir.Keys | Where-Object { $_ -eq $hostKey -or $_.EndsWith("/$hostKey") })
+        if (-not $hit -and $path) { $hit = @($byDir.Keys | Where-Object { $_.EndsWith("/$path") }) }
+        if (-not $hit) { $noCsv.Add($s); continue }
+        foreach ($k in $hit) {
+            if ($folders.Contains($k)) { continue }
+            $folders.Add($k)
+            foreach ($f in $byDir[$k]) { if ($f.Name -notlike 'inventory_*') { $files.Add($f) } }
+        }
+    }
+    return @{ Files = $files.ToArray(); Folders = $folders.ToArray(); NoCsv = $noCsv.ToArray() }
+}
+
 function Test-SpSystemCsvName([string] $Name) {
     <# Scan file name "<library title>_<folder>": is it one of SharePoint's own libraries? #>
     if ($Name.Contains('__catalogs_')) { return $true }
@@ -1680,7 +1943,11 @@ function Add-SpReportSheet($Package, [string] $Name, [string[]] $Header, $Rows) 
     $ws = $Package.Workbook.Worksheets.Add($Name)
     $data = New-Object 'Collections.Generic.List[object[]]' ($Rows.Count + 1)
     $data.Add([object[]]$Header)
-    foreach ($r in $Rows) { $data.Add([object[]]$r) }
+    foreach ($r in $Rows) {
+        $r = [object[]]$r
+        if ($r.Length -lt $Header.Length) { $p = New-Object 'object[]' $Header.Length; [Array]::Copy($r, $p, $r.Length); $r = $p }   # rows without the last columns
+        $data.Add($r)
+    }
     [void]$ws.Cells['A1'].LoadFromArrays($data)
     $ws.Cells[1, 1, 1, $Header.Length].Style.Font.Bold = $true
     $ws.Cells[1, 1, 1, $Header.Length].AutoFilter = $true
@@ -1702,24 +1969,44 @@ function Compare-SpExport {
        export $WorkbookPath. A file matches on UniqueId, else on FileRef; folders do not count.
        A library scanned more than once counts each file once. Writes the report to $ReportPath.
        Columns are checked both ways. The workbook lists the columns of all libraries together, so
-       a column counts as missing from a CSV only if the workbook has a value for one of its files. #>
+       a column counts as missing from a CSV only if the workbook has a value for one of its files.
+       Values: for every file in both and every column in both, the CSV value is compared with the xlsx value
+       (Value check sheets), unless -NoValues. $CsvFiles: only these CSVs (below $CsvFolder) instead of all of them. #>
     param([string] $WorkbookPath, [string] $CsvFolder, [string] $ReportPath,
-          [scriptblock] $Log = { param($m) Write-Host $m }, [scriptblock] $Progress)
+          [scriptblock] $Log = { param($m) Write-Host $m }, [scriptblock] $Progress, [object[]] $CsvFiles, [switch] $NoValues)
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $inv = $script:Inv
     $nf = { param($n) ([long]$n).ToString('N0', $inv) }.GetNewClosure()
     $root = [IO.Path]::GetFullPath($CsvFolder).TrimEnd('\')
     $self = [IO.Path]::GetFullPath($WorkbookPath)
-    $csvFiles = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.csv' | Where-Object { $_.FullName -ne $self } | Sort-Object FullName)
+    $csvFiles = if ($CsvFiles) { @($CsvFiles | ForEach-Object { if ($_ -is [IO.FileInfo]) { $_ } else { Get-Item -LiteralPath $_ } } | Sort-Object FullName) }
+                else { @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.csv' | Where-Object { $_.FullName -ne $self } | Sort-Object FullName) }
     if (-not $csvFiles.Count) { throw "No .csv files found below $root" }
     if (-not (Get-Module ImportExcel)) {
         if (-not (Get-Module -ListAvailable ImportExcel)) { throw 'Writing the report needs the ImportExcel module.' }
         Import-Module ImportExcel
     }
 
+    # columns whose values are compared: in the CSVs (header rows only) and not the match keys
+    $valueColumns = @()
+    if (-not $NoValues) {
+        $csvHeads = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        foreach ($file in $csvFiles) {
+            $p = $null
+            try { $p = Open-SpCsvParser $file.FullName; if (-not $p.EndOfData) { foreach ($h in $p.ReadFields()) { if ($h.Trim()) { [void]$csvHeads.Add($h.Trim()) } } } }
+            catch { } finally { if ($p) { $p.Dispose() } }
+        }
+        foreach ($n in @('UniqueId', 'FileRef', 'FSObjType') + $script:ExportOnlyColumns) { [void]$csvHeads.Remove($n) }
+        $valueColumns = [string[]]@($csvHeads)
+    }
+
     # ---- combined export -----------------------------------------------------------
     & $Log "Reading $WorkbookPath ..."
-    $wb = Read-SpCompareWorkbook $WorkbookPath $Progress
+    $wb = Read-SpCompareWorkbook $WorkbookPath $Progress $valueColumns
+    $vc = $null
+    if (-not $NoValues -and $wb.ValueNames -and $wb.ValueNames.Count) {
+        $vc = New-Object MetadataHorizontal.SpValueCompare(([string[]]$wb.ValueNames), ([long[][]]$wb.ValueKeys))
+    }
     $byId = New-Object 'Collections.Generic.Dictionary[string,int]' ([StringComparer]::OrdinalIgnoreCase)
     $byRef = New-Object 'Collections.Generic.Dictionary[string,int]' ([StringComparer]::OrdinalIgnoreCase)
     $wbIds = New-Object 'Collections.Generic.List[string]'
@@ -1779,6 +2066,9 @@ function Compare-SpExport {
             $iRef = if ($ix.ContainsKey('FileRef')) { [int]$ix['FileRef'] } else { -1 }
             $iType = if ($ix.ContainsKey('FSObjType')) { [int]$ix['FSObjType'] } else { -1 }
             $width = $headers.Length
+            # value check: position of each compared column in this CSV (-1 = not in it)
+            $vIdx = $null
+            if ($vc) { $vIdx = [int[]]@(foreach ($n in $vc.Names) { if ($ix.ContainsKey($n)) { [int]$ix[$n] } else { -1 } }) }
             # values are only counted for columns the workbook lacks: far faster than all of them
             $extra = @(foreach ($n in $ix.Keys) { if (-not $wbColumns.Contains($n)) { @{ Name = $n; Index = [int]$ix[$n]; Values = 0 } } })
             $sNames = [string[]]@($ix.Keys | Where-Object { $wbColumns.Contains($_) })
@@ -1793,6 +2083,7 @@ function Compare-SpExport {
             if ($lib.HasHeaders) { $lib.Headers.IntersectWith([string[]]@($ix.Keys)) }
             else { foreach ($n in $ix.Keys) { [void]$lib.Headers.Add($n) }; $lib.HasHeaders = $true }
             while (-not $p.EndOfData) {
+                $line = $p.LineNumber            # the line this record starts on (header = line 1)
                 try { $f = $p.ReadFields() }
                 catch {
                     $badRows++; $lib.Problems++
@@ -1833,12 +2124,13 @@ function Compare-SpExport {
                     }
                 } else {
                     $lib.Missing++
-                    $missing.Add([object[]]@($(if ($lib.System) { 'System' } else { 'Content' }), $dir, $name, $ref, $id, $rel))
+                    $missing.Add([object[]]@($(if ($lib.System) { 'System' } else { 'Content' }), $dir, $name, $ref, $id, $rel, [long]$line))
                 }
                 if ($raw -ge 0) {
                     $found[$k] = $true
                     $lib.Found++
                     $rowLib[$raw] = $lib.Number
+                    if ($vc) { $vc.Row($f, $vIdx, $raw, $lib.Number, $(if ($ref) { $ref } else { $wbRefs[$k] }), $rel, [long]$line) }
                 }
                 for ($j = 0; $j -lt $sCount; $j++) {
                     if ($f[$sIdx[$j]].Length) {
@@ -1881,10 +2173,11 @@ function Compare-SpExport {
         $wbValues[$n] = $list.Count
         if ($script:ExportOnlyColumns -contains $n) { continue }
         $counts = New-Object 'int[]' $libList.Count
-        foreach ($row in $list) { $l = $rowLib[$row]; if ($l -ge 0) { $counts[$l]++ } }
+        $firstRow = New-Object 'int[]' $libList.Count
+        foreach ($row in $list) { $l = $rowLib[$row]; if ($l -ge 0) { if (-not $counts[$l]) { $firstRow[$l] = $row }; $counts[$l]++ } }
         for ($l = 0; $l -lt $counts.Length; $l++) {
             if ($counts[$l] -and $libList[$l].HasHeaders -and -not $libList[$l].Headers.Contains($n)) {
-                $byLib.Add([object[]]@('CSV', 'Column not in this CSV', $n, $(if ($libList[$l].System) { 'System' } else { 'Content' }), $libList[$l].Site, $libList[$l].Name, [int]$counts[$l]))
+                $byLib.Add([object[]]@('CSV', 'Column not in this CSV', $n, $(if ($libList[$l].System) { 'System' } else { 'Content' }), $libList[$l].Site, $libList[$l].Name, [int]$counts[$l], [long]($firstRow[$l] + 2)))
                 $libList[$l].NoCsvCol++
                 $csvGaps[$n] = 1 + [int]$csvGaps[$n]
                 [void]$libList[$l].NoCsvNames.Add($n)
@@ -1980,10 +2273,59 @@ function Compare-SpExport {
                elseif ($missingContent) { 'FILES MISSING: content library files are not in the workbook (see Missing from workbook)' }
                elseif ($missingSystem) { 'All content library files are in the workbook; only SharePoint system library files are missing' }
                else { 'All files are in the workbook' }
+    # ---- value check ---------------------------------------------------------------
+    $valRows = New-Object 'Collections.Generic.List[object[]]'
+    $valLibRows = New-Object 'Collections.Generic.List[object[]]'
+    $valDiffRows = New-Object 'Collections.Generic.List[object[]]'
+    $valSame = 0; $valFormat = 0; $valDiffer = 0; $valCells = [long]0; $valBlank = [long]0
+    $valueResult = if ($NoValues) { 'Values not compared (-NoValues).' } else { 'Values not compared: no column is in both.' }
+    if ($vc) {
+        & $Log "Value check: reading the xlsx text of $(& $nf $vc.Diffs.Count) listed cells ..."
+        Get-SpWorkbookText $wb $vc.Diffs
+        $K = [MetadataHorizontal.SpValue]
+        $example = @{}
+        foreach ($d in $vc.Diffs) {
+            $l = $libList[$d.Lib]
+            $valDiffRows.Add([object[]]@($K::Names[$d.Kind], $vc.Names[$d.Col], $(if ($l.System) { 'System' } else { 'Content' }), $l.Site, $l.Name, $d.Ref,
+                                         [long]($d.Raw + 2), $d.File, [long]$d.Line, $d.Csv, $d.Xlsx))
+            $key = "$($d.Col)"
+            if (-not $example.ContainsKey($key) -or ($d.Kind -eq $K::Different -and $example[$key].Kind -ne $K::Different)) { $example[$key] = $d }
+        }
+        for ($j = 0; $j -lt $vc.Names.Length; $j++) {
+            $t = @(for ($c = 0; $c -lt $K::Kinds; $c++) { [long]$vc.Totals[$j, $c] })
+            $files = ($t | Measure-Object -Sum).Sum
+            if (-not $files) { continue }
+            $res = if ($t[5]) { 'Different values' } elseif ($t[3] -or $t[4]) { 'Blank on one side' }
+                   elseif ($t[1] -or $t[2]) { 'Same value, other format / time zone' } else { 'All the same' }
+            switch ($res) { 'All the same' { $valSame++ } 'Same value, other format / time zone' { $valFormat++ } default { $valDiffer++ } }
+            $valCells += $t[5]; $valBlank += $t[3] + $t[4]
+            $ex = $example["$j"]
+            $valRows.Add([object[]]@($res, $vc.Names[$j], [long]$files, $t[0], $t[1], $t[2], $vc.ShiftText($j), $t[3], $t[4], $t[5],
+                                     $(if ($ex) { $K::Names[$ex.Kind] } else { '' }), $(if ($ex) { $ex.Csv } else { '' }), $(if ($ex) { $ex.Xlsx } else { '' }), $(if ($ex) { $ex.Ref } else { '' }),
+                                     $(if ($ex) { [long]($ex.Raw + 2) } else { '' }), $(if ($ex) { $ex.File } else { '' }), $(if ($ex) { [long]$ex.Line } else { '' })))
+        }
+        $order = @{ 'Different values' = 0; 'Blank on one side' = 1; 'Same value, other format / time zone' = 2; 'All the same' = 3 }
+        $valRows = @($valRows | Sort-Object { $order[$_[0]] }, @{ Expression = { $_[9] + $_[7] + $_[8] }; Descending = $true }, { $_[1] })
+        foreach ($libNo in $vc.ByLib.Keys) {
+            $m = $vc.ByLib[$libNo]
+            $l = $libList[$libNo]
+            for ($j = 0; $j -lt $vc.Names.Length; $j++) {
+                $t = @(for ($c = 0; $c -lt $K::Kinds; $c++) { [long]$m[$j, $c] })
+                if (-not ($t[1] + $t[2] + $t[3] + $t[4] + $t[5])) { continue }
+                $valLibRows.Add([object[]]@($vc.Names[$j], $(if ($l.System) { 'System' } else { 'Content' }), $l.Site, $l.Name, [long]($t | Measure-Object -Sum).Sum, $t[0], $t[1], $t[2], $t[3], $t[4], $t[5]))
+            }
+        }
+        $valLibRows = @($valLibRows | Sort-Object { $_[0] }, @{ Expression = { $_[10] }; Descending = $true }, { $_[2] }, { $_[3] })
+        if ($vc.Skipped) { $valDiffRows.Add([object[]]@('', "Only the first $($vc.MaxPerColumn) cells per column are listed; $(& $nf $vc.Skipped) more are counted in Value check", '', '', '', '', '', '', '', '', '')) }
+        $valueResult = "Values of $($valRows.Count) columns in both: $valSame all the same, $valFormat same apart from format or time zone, $valDiffer with blanks or different values " +
+                       "($(& $nf $valCells) cells different, $(& $nf $valBlank) blank on one side)."
+    }
+
     $summary = New-Object 'Collections.Generic.List[object[]]'
     foreach ($row in @(
             @('Result', $verdict),
             @('Column result', $columnResult),
+            @('Value result', $valueResult),
             @('Workbook', $WorkbookPath),
             @('CSV folder', $root),
             @('CSV files read', [int]$csvFiles.Count),
@@ -2005,7 +2347,13 @@ function Compare-SpExport {
             @('Columns missing in all CSVs', [int]$noCsv),
             @('Columns missing in some CSVs', [int]$noCsvSome),
             @('Libraries with a column missing in their CSV', [int]$gapLibs),
-            @('Problems (unreadable rows or files)', [int]$problemCount))) {
+            @('Problems (unreadable rows or files)', [int]$problemCount),
+            @('Value check: columns compared', [int]$valRows.Count),
+            @('  All values the same', [int]$valSame),
+            @('  Same apart from format or time zone', [int]$valFormat),
+            @('  Blank on one side or different', [int]$valDiffer),
+            @('Cells with different values', [long]$valCells),
+            @('Cells blank on one side', [long]$valBlank))) {
         $summary.Add([object[]]$row)
     }
     if ($problemCount -gt $problems.Count) {
@@ -2022,12 +2370,20 @@ function Compare-SpExport {
         $sheet.Column(2).Width = 90
         $sheet.Column(2).Style.HorizontalAlignment = 'Left'
         Add-SpReportSheet $pkg 'Libraries' $libHeader $libRows
-        Add-SpReportSheet $pkg 'Missing from workbook' @('Type', 'Site folder', 'Library (CSV name)', 'FileRef', 'UniqueId', 'CSV file') $sortedMissing
+        Add-SpReportSheet $pkg 'Missing from workbook' @('Type', 'Site folder', 'Library (CSV name)', 'FileRef', 'UniqueId', 'CSV file', 'CSV line') $sortedMissing
         Add-SpReportSheet $pkg 'Only in workbook' @('FileRef', 'UniqueId') $onlyWb
         Add-SpReportSheet $pkg 'Path or Id differs' @('What', 'CSV FileRef', 'Workbook FileRef', 'CSV UniqueId', 'Workbook UniqueId', 'CSV file') $changed
         Add-SpReportSheet $pkg 'Column check' @('Result', 'Column', 'CSV files with it', 'In xlsx', 'Files with value in CSV', 'Files with value in xlsx', 'Value only in CSV', 'Value only in xlsx', 'Libraries missing it', 'Where missing (site | library)') $colRows
         $pkg.Workbook.Worksheets['Column check'].Column(10).Width = 90
-        Add-SpReportSheet $pkg 'Column check by CSV' @('Missing in', 'Problem', 'Column', 'Type', 'Site folder', 'Library (CSV name)', 'Files affected') $byLib
+        Add-SpReportSheet $pkg 'Column check by CSV' @('Missing in', 'Problem', 'Column', 'Type', 'Site folder', 'Library (CSV name)', 'Files affected', 'First xlsx row with a value') $byLib
+        Add-SpReportSheet $pkg 'Value check' @('Result', 'Column', 'Files compared', 'Same', 'Same, other format', 'Same time, other time zone', 'Time shift',
+                                               'Blank in xlsx', 'Blank in CSV', 'Different', 'Example', 'Example CSV value', 'Example xlsx value', 'Example FileRef',
+                                               'Example xlsx row', 'Example CSV file', 'Example CSV line') $valRows
+        foreach ($c in 12, 13, 14) { $pkg.Workbook.Worksheets['Value check'].Column($c).Width = 50 }
+        Add-SpReportSheet $pkg 'Value check by CSV' @('Column', 'Type', 'Site folder', 'Library (CSV name)', 'Files compared', 'Same', 'Same, other format',
+                                                      'Same time, other time zone', 'Blank in xlsx', 'Blank in CSV', 'Different') $valLibRows
+        Add-SpReportSheet $pkg 'Value differences' @('Result', 'Column', 'Type', 'Site folder', 'Library (CSV name)', 'FileRef', 'xlsx row', 'CSV file', 'CSV line', 'CSV value', 'xlsx value') $valDiffRows
+        foreach ($c in 6, 8, 10, 11) { $pkg.Workbook.Worksheets['Value differences'].Column($c).Width = 50 }
         Add-SpReportSheet $pkg 'Problems' @('CSV file', 'Problem') $problems
         $pkg.SaveAs((New-Object IO.FileInfo($ReportPath)))
     } finally {
@@ -2037,11 +2393,14 @@ function Compare-SpExport {
     $viewRows = New-Object 'Collections.Generic.List[string[]]'
     foreach ($r in $libRows) { $viewRows.Add([string[]]@($r | ForEach-Object { [Convert]::ToString($_, $inv) })) }
     & $Log ("$verdict`nIn both $(& $nf $matched); missing from workbook $(& $nf $missingContent) content + $(& $nf $missingSystem) system; " +
-            "only in workbook $(& $nf $onlyWb.Count); problems $(& $nf $problemCount)`n$columnResult`nReport: $ReportPath  [$($sw.Elapsed.TotalSeconds.ToString('0.0', $inv))s]")
+            "only in workbook $(& $nf $onlyWb.Count); problems $(& $nf $problemCount)`n$columnResult`n$valueResult`nReport: $ReportPath  [$($sw.Elapsed.TotalSeconds.ToString('0.0', $inv))s]")
     return [ordered]@{
         in_both = [int]$matched; missing_content = [int]$missingContent; missing_system = [int]$missingSystem
         only_in_workbook = [int]$onlyWb.Count; differs = [int]$changed.Count; problems = [int]$problemCount
-        Verdict = $verdict; ColumnResult = $columnResult; Path = $ReportPath
+        value_columns = [int]$valRows.Count; value_columns_same = [int]$valSame; value_columns_format = [int]$valFormat
+        value_columns_differ = [int]$valDiffer; value_cells_different = [long]$valCells; value_cells_blank = [long]$valBlank
+        Verdict = $verdict; ColumnResult = $columnResult; ValueResult = $valueResult; Path = $ReportPath
+        ColumnRows = $colRows; ColumnByCsv = $byLib; ValueRows = $valRows; ValueDiffRows = $valDiffRows; MissingRows = $sortedMissing
         View = @{ Columns = $libHeader; Rows = $viewRows; Total = $viewRows.Count }
     }
 }
@@ -2051,6 +2410,103 @@ function Compare-SpExport {
 # File names and scheduled exports (Windows Task Scheduler)
 # ---------------------------------------------------------------------------
 $script:TaskPrefix = 'MetadataHorizontal SP export - '
+
+function Invoke-SpCompareSet {
+    <# One or more combined exports against one CSV folder. Each export is compared only with the CSVs of its own sites
+       (Find-SpCompareCsvs, from its Library columns sheet); a single export whose sites match no folder uses every CSV.
+       One report per export in $ReportFolder; with more than one export also sharepoint_compare_summary_<time>.xlsx.
+       -> @{ Rows; Path (summary or the one report); View; Single (Compare-SpExport result when one export) } #>
+    param([string[]] $WorkbookPaths, [string] $CsvFolder, [string] $ReportFolder,
+          [scriptblock] $Log = { param($m) Write-Host $m }, [scriptblock] $Progress, [switch] $NoValues)
+    $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $header = [string[]]@('Workbook', 'Result', 'Sites', 'CSV folders', 'CSV files', 'Sites with no CSV folder', 'In both', 'Missing from xlsx (content)',
+                          'Missing from xlsx (system)', 'Only in xlsx', 'Problems', 'Columns compared', 'Columns all same', 'Columns same apart from format/time zone',
+                          'Columns blank or different', 'Cells different', 'Cells blank on one side', 'Column result', 'Report', 'Matched folders')
+    $rows = New-Object 'Collections.Generic.List[object[]]'
+    $colSheet = New-Object 'Collections.Generic.List[object[]]'     # every column with a problem, per export
+    $diffSheet = New-Object 'Collections.Generic.List[object[]]'    # cells, with xlsx row and CSV line
+    $gapSheet = New-Object 'Collections.Generic.List[object[]]'     # column problems per CSV
+    $missSheet = New-Object 'Collections.Generic.List[object[]]'    # files only in the CSVs, with CSV line
+    $perColumn = 100; $maxRows = 1000000
+    $single = $null
+    $n = 0
+    foreach ($wbPath in $WorkbookPaths) {
+        $n++
+        $base = [IO.Path]::GetFileNameWithoutExtension($wbPath)
+        & $Log "[$n/$($WorkbookPaths.Count)] $base"
+        $sites = @(Get-SpExportSites $wbPath)
+        $set = $null
+        if ($sites.Count) { $set = Find-SpCompareCsvs $sites $CsvFolder }
+        $files = if ($set -and $set.Files.Count) { $set.Files } else { $null }
+        if (-not $files) {
+            if ($WorkbookPaths.Count -gt 1) {
+                $why = if ($sites.Count) { 'No CSV folder for its sites' } else { 'Not compared: no Library columns sheet, so its sites are unknown' }
+                & $Log "    $why"
+                $rows.Add([object[]]@($base, $why, $sites.Count, 0, 0, $(if ($set) { $set.NoCsv -join '; ' } else { '' }), '', '', '', '', '', '', '', '', '', '', '', '', '', ''))
+                continue
+            }
+            & $Log '    No CSV folder matches its sites: comparing with every CSV in the folder'
+        } else {
+            & $Log "    $($sites.Count) site(s) -> $($set.Folders.Count) CSV folder(s), $($files.Count) CSV file(s)$(if ($set.NoCsv.Count) { "; no CSV folder for $($set.NoCsv -join ', ')" })"
+        }
+        $report = Join-Path $ReportFolder "sharepoint_compare_${base}_$stamp.xlsx"
+        try {
+            $r = Compare-SpExport -WorkbookPath $wbPath -CsvFolder $CsvFolder -ReportPath $report -Log $Log -Progress $Progress -CsvFiles $files -NoValues:$NoValues
+            if ($WorkbookPaths.Count -eq 1) { $single = $r }
+            # one row per column with a problem: the column check and the value check side by side
+            $cols = [ordered]@{}
+            foreach ($c in $r.ColumnRows) {
+                if ($c[0] -eq 'In both' -or $c[0] -eq 'Added by the export') { continue }
+                $cols[$c[1]] = [object[]]@($base, $c[1], $c[0], '', '', '', '', '', '', '', '', '', '', '', '', '', $c[9])
+            }
+            foreach ($v in $r.ValueRows) {
+                if ($v[0] -eq 'All the same') { continue }
+                $row = if ($cols.Contains($v[1])) { $cols[$v[1]] } else { [object[]]@($base, $v[1], 'In both', '', '', '', '', '', '', '', '', '', '', '', '', '', '') }
+                $row[3] = $v[0]; $row[4] = $v[2]; $row[5] = $v[3]; $row[6] = $v[4]; $row[7] = $v[5]; $row[8] = $v[6]; $row[9] = $v[7]; $row[10] = $v[8]; $row[11] = $v[9]
+                $row[12] = $v[14]; $row[13] = $v[15]; $row[14] = $v[16]; $row[15] = "CSV: $($v[11]) | xlsx: $($v[12])"
+                $cols[$v[1]] = $row
+            }
+            foreach ($c in $cols.Values) { $colSheet.Add($c) }
+            $perCol = @{}
+            foreach ($d in $r.ValueDiffRows) {
+                if ($diffSheet.Count -ge $maxRows) { break }
+                $perCol[$d[1]] = 1 + [int]$perCol[$d[1]]
+                if ($perCol[$d[1]] -le $perColumn) { $diffSheet.Add([object[]](@($base) + $d)) }
+            }
+            foreach ($g in $r.ColumnByCsv) { if ($gapSheet.Count -lt $maxRows) { $gapSheet.Add([object[]](@($base) + $g)) } }
+            foreach ($m in $r.MissingRows) { if ($missSheet.Count -lt $maxRows) { $missSheet.Add([object[]](@($base) + $m)) } }
+            $rows.Add([object[]]@($base, $r.Verdict, $sites.Count, $(if ($set) { $set.Folders.Count } else { '' }), $(if ($files) { $files.Count } else { 'all' }),
+                                  $(if ($set) { $set.NoCsv -join '; ' } else { '' }), $r.in_both, $r.missing_content, $r.missing_system, $r.only_in_workbook, $r.problems,
+                                  $r.value_columns, $r.value_columns_same, $r.value_columns_format, $r.value_columns_differ, $r.value_cells_different, $r.value_cells_blank,
+                                  $r.ColumnResult, $report, $(if ($set) { $set.Folders -join '; ' } else { '' })))
+        } catch {
+            & $Log "    ERROR: $($_.Exception.Message)"
+            $rows.Add([object[]]@($base, "ERROR: $($_.Exception.Message)", $sites.Count, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''))
+        }
+        [GC]::Collect()
+    }
+    $path = if ($single) { $single.Path } else { $null }
+    if ($WorkbookPaths.Count -gt 1) {
+        $path = Join-Path $ReportFolder "sharepoint_compare_summary_$stamp.xlsx"
+        $pkg = New-Object OfficeOpenXml.ExcelPackage
+        try {
+            Add-SpReportSheet $pkg 'Summary' $header $rows
+            Add-SpReportSheet $pkg 'Columns' @('Workbook', 'Column', 'Column check', 'Value check', 'Files compared', 'Same', 'Same, other format',
+                                               'Same time, other time zone', 'Time shift', 'Blank in xlsx', 'Blank in CSV', 'Different',
+                                               'Example xlsx row', 'Example CSV file', 'Example CSV line', 'Example values', 'Where missing (site | library)') $colSheet
+            Add-SpReportSheet $pkg 'Value differences' @('Workbook', 'Result', 'Column', 'Type', 'Site folder', 'Library (CSV name)', 'FileRef',
+                                                         'xlsx row', 'CSV file', 'CSV line', 'CSV value', 'xlsx value') $diffSheet
+            Add-SpReportSheet $pkg 'Column check by CSV' @('Workbook', 'Missing in', 'Problem', 'Column', 'Type', 'Site folder', 'Library (CSV name)',
+                                                           'Files affected', 'First xlsx row with a value') $gapSheet
+            Add-SpReportSheet $pkg 'Missing from workbook' @('Workbook', 'Type', 'Site folder', 'Library (CSV name)', 'FileRef', 'UniqueId', 'CSV file', 'CSV line') $missSheet
+            $pkg.SaveAs((New-Object IO.FileInfo($path)))
+        } finally { $pkg.Dispose() }
+        & $Log "Summary: $path"
+    }
+    $viewRows = New-Object 'Collections.Generic.List[string[]]'
+    foreach ($r in $rows) { $viewRows.Add([string[]]@($r | ForEach-Object { [Convert]::ToString($_, $script:Inv) })) }
+    return @{ Rows = $rows; Path = $path; Single = $single; View = @{ Columns = $header; Rows = $viewRows; Total = $viewRows.Count } }
+}
 
 function Expand-SpFileName([string] $Name, [datetime] $When = (Get-Date)) {
     <# {date} -> yyyyMMdd, {time} -> HHmm; adds .xlsx unless the name already ends in .xlsx or .csv. #>
@@ -2148,6 +2604,49 @@ function Remove-SpSchedule([string] $Name, [string] $JobDir) {
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
 }
 
+function Set-SpKeepAwake {
+    <# An export can take hours: keep the PC from going to sleep while this thread runs. #>
+    Add-Type -Namespace MetadataHorizontal -Name Power -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'
+    [void][MetadataHorizontal.Power]::SetThreadExecutionState([uint32]2147483649)
+}
+
+function Invoke-SpJobExport {
+    <# One saved export (a schedule's job file or a queue item): log in, find its libraries again by id, export to a free name.
+       Item counts and titles come fresh from the server. Returns the export's stats plus missing = libraries that could not be read.
+       Continues the unfinished export of the same libraries in the same folder, if there is one. #>
+    param([Parameter(Mandatory)] $Job, [Parameter(Mandatory)][scriptblock] $Log, [scriptblock] $RequestLog, [scriptblock] $Progress)
+    $password = ''
+    if ($Job.Password) {
+        try { $password = (New-Object Net.NetworkCredential('', (ConvertTo-SecureString $Job.Password))).Password }
+        catch { throw "The saved password can only be read by the Windows login and PC that saved it: add this export again. ($($_.Exception.Message))" }
+    }
+    $sp = New-SpSession $Job.SiteUrl $Job.User $password $RequestLog
+    & $Log "Connected to $($sp.Url) ($($sp.Title)) as $(if ($Job.User) { $Job.User } else { [Security.Principal.WindowsIdentity]::GetCurrent().Name })"
+
+    $found = New-Object 'Collections.Generic.Dictionary[string,hashtable]'
+    foreach ($webGroup in @($Job.Libraries | Group-Object WebUrl)) {
+        try {
+            $web = @{ Url = $webGroup.Name; Title = $webGroup.Group[0].WebTitle }
+            foreach ($l in (Get-SpLibraries $sp $web)) { $found[$l.Id] = $l }
+        } catch { & $Log "Libraries of $($webGroup.Name) could not be read: $($_.Exception.Message.Split("`n")[0])" }
+    }
+    $libs = New-Object 'Collections.Generic.List[hashtable]'
+    $missing = 0
+    foreach ($l in $Job.Libraries) {
+        if ($found.ContainsKey($l.Id)) { $libs.Add($found[$l.Id]) }
+        else { $missing++; & $Log "MISSING: library $($l.WebTitle) / $($l.Title) was not found ($($l.WebUrl))" }
+    }
+    if (-not $libs.Count) { throw 'None of the chosen libraries could be read.' }
+
+    [void][IO.Directory]::CreateDirectory($Job.Folder)
+    $final = Get-SpFreePath (Join-Path $Job.Folder (Expand-SpFileName $Job.FileName))
+    $r = Export-SpMetadata -Sp $sp -Libraries $libs -Path $final -Log $Log -Progress $Progress -Resume
+    $r.missing = $missing
+    & $Log "DONE: $($r.files) files from $($r.libraries) libraries saved to $($r.path)"
+    if ($missing) { & $Log "WARNING: $missing of $(@($Job.Libraries).Count) libraries are not in this file." }
+    return $r
+}
+
 function Invoke-SpScheduledExport {
     <# The unattended run: job file -> export -> log file. Returns the exit code: 0 ok, 1 failed, 2 saved but libraries missing.
        A run that failed part way is continued by the next run of the same schedule. #>
@@ -2157,41 +2656,12 @@ function Invoke-SpScheduledExport {
     $schedLog = { param($m) [IO.File]::AppendAllText($schedLogFile, ('[{0:yyyy-MM-dd HH:mm:ss}] {1}{2}' -f (Get-Date), $m, "`r`n")) }
     try {
         & $schedLog "Scheduled export: $JobPath"
-        # the export can take hours: keep the PC from going to sleep during this run
-        try {
-            Add-Type -Namespace MetadataHorizontal -Name Power -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'
-            [void][MetadataHorizontal.Power]::SetThreadExecutionState([uint32]2147483649)
-        } catch { & $schedLog "Could not stop the PC from sleeping: $($_.Exception.Message)" }
-
+        try { Set-SpKeepAwake } catch { & $schedLog "Could not stop the PC from sleeping: $($_.Exception.Message)" }
         $job = Get-Content -LiteralPath $JobPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        $password = ''
-        if ($job.Password) { $password = (New-Object Net.NetworkCredential('', (ConvertTo-SecureString $job.Password))).Password }
-        $sp = New-SpSession $job.SiteUrl $job.User $password $schedLog
-        & $schedLog "Connected to $($sp.Url) ($($sp.Title)) as $(if ($job.User) { $job.User } else { [Security.Principal.WindowsIdentity]::GetCurrent().Name })"
-
-        # item counts and titles come fresh from the server; libraries are matched by id
-        $found = New-Object 'Collections.Generic.Dictionary[string,hashtable]'
-        foreach ($webGroup in @($job.Libraries | Group-Object WebUrl)) {
-            try {
-                $web = @{ Url = $webGroup.Name; Title = $webGroup.Group[0].WebTitle }
-                foreach ($l in (Get-SpLibraries $sp $web)) { $found[$l.Id] = $l }
-            } catch { & $schedLog "Libraries of $($webGroup.Name) could not be read: $($_.Exception.Message.Split("`n")[0])" }
-        }
-        $libs = New-Object 'Collections.Generic.List[hashtable]'
-        $missing = 0
-        foreach ($l in $job.Libraries) {
-            if ($found.ContainsKey($l.Id)) { $libs.Add($found[$l.Id]) }
-            else { $missing++; & $schedLog "MISSING: library $($l.WebTitle) / $($l.Title) was not found ($($l.WebUrl))" }
-        }
-        if (-not $libs.Count) { throw 'None of the scheduled libraries could be read.' }
-
-        [void][IO.Directory]::CreateDirectory($job.Folder)
-        $final = Get-SpFreePath (Join-Path $job.Folder (Expand-SpFileName $job.FileName))
         $schedWatch = [Diagnostics.Stopwatch]::StartNew()
         $schedProgress = { param($percent, $text) if ($schedWatch.Elapsed.TotalSeconds -ge 60) { & $schedLog $text; $schedWatch.Restart() } }
-        $r = Export-SpMetadata -Sp $sp -Libraries $libs -Path $final -Log $schedLog -Progress $schedProgress -Resume
-        & $schedLog "DONE: $($r.files) files from $($r.libraries) libraries saved to $final"
-        if ($missing) { & $schedLog "WARNING: $missing of $(@($job.Libraries).Count) libraries are not in this file."; return 2 }
+        $r = Invoke-SpJobExport -Job $job -Log $schedLog -RequestLog $schedLog -Progress $schedProgress
+        if ($r.missing) { return 2 }
         return 0
     } catch {
         & $schedLog "FAILED: $($_.Exception.Message)"
@@ -2200,5 +2670,32 @@ function Invoke-SpScheduledExport {
 }
 
 
-Export-ModuleMember -Function New-SpSession, Invoke-SpGet, Get-SpWebs, Get-SpLibraries, Export-SpMetadata, New-SpRequestLog, Get-SpUnfinished, Compare-SpExport, Test-SpBigXlsx, Open-SpSheetReader,
-    Expand-SpFileName, Save-SpSchedule, Get-SpSchedules, Start-SpSchedule, Remove-SpSchedule, Invoke-SpScheduledExport
+# ---------------------------------------------------------------------------
+# Export queue: the list the app keeps, so it survives closing the app
+# ---------------------------------------------------------------------------
+function Read-SpQueueFile([string] $Path) {
+    <# -> @{ Folder; Items }. An export that was running when the app closed waits again, and continues from its last saved page.
+       A file that cannot be read is kept as .bad, and the error goes to the caller. #>
+    if (-not (Test-Path -LiteralPath $Path)) { return @{ Folder = ''; Items = @() } }
+    try { $d = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json }
+    catch {
+        Move-Item -LiteralPath $Path -Destination "$Path.bad" -Force
+        throw "The export queue could not be read, so it starts empty. The old list is kept in $Path.bad. ($($_.Exception.Message))"
+    }
+    $items = @($d.Items | Where-Object { $_ })
+    foreach ($i in $items) { if ($i.State -eq 'Running') { $i.State = 'Waiting'; $i.Detail = 'Continues from its last saved page' } }
+    @{ Folder = [string]$d.Folder; Items = $items }
+}
+
+function Save-SpQueueFile([string] $Path, [string] $Folder, $Items) {
+    <# To a temporary name first: a crash while saving must not lose the list. Passwords in it are already encrypted for this Windows login. #>
+    $tmp = "$Path.tmp"
+    $text = [ordered]@{ Folder = $Folder; Items = @($Items) } | ConvertTo-Json -Depth 6
+    [IO.File]::WriteAllText($tmp, $text, (New-Object Text.UTF8Encoding($false)))
+    Move-Item -LiteralPath $tmp -Destination $Path -Force
+}
+
+
+Export-ModuleMember -Function New-SpSession, Invoke-SpGet, Get-SpWebs, Get-SpLibraries, Export-SpMetadata, New-SpRequestLog, Get-SpUnfinished, Compare-SpExport, Invoke-SpCompareSet, Get-SpExportSites, Find-SpCompareCsvs, Test-SpBigXlsx, Open-SpSheetReader,
+    Expand-SpFileName, Save-SpSchedule, Get-SpSchedules, Start-SpSchedule, Remove-SpSchedule, Invoke-SpScheduledExport,
+    Set-SpKeepAwake, Invoke-SpJobExport, Read-SpQueueFile, Save-SpQueueFile

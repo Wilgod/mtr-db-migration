@@ -6,12 +6,24 @@
 -- Baseline: cwp_opspj4 (richest of the 9 sources), cross-checked against
 -- cwp_ecr (newest). Every column of every source table exists here, so no
 -- source data is dropped. Rules applied (see ../MAPPING.md):
---   * Core app tables keep the EXACT layout of mtr-phase3 scripts/init.sql +
---     init_pathbreak.sql so the GUI / EF6 / PathBreakRepository work unchanged.
---     No columns are added to them; per-row provenance is recorded in the
---     "_merge" schema instead (ID ranges + conflict log).
---   * Tables NOT used by the app (source imports + feature tables) get a
---     "SourceDb"/source_db column for source separation.
+--   * Core app tables keep the layout of mtr-phase3 scripts/init.sql +
+--     init_pathbreak.sql plus two added columns: "SiteId" (after SiteName) and
+--     a nullable source_db at the end (MigrationTasks_Parsed: after IsDeltaSync,
+--     where SELECT * FROM "MigrationTasks" puts it). source_db = the source DB
+--     the row was copied from; NULL = row written by the app after the merge.
+--     EF6 / PathBreakRepository ignore columns they don't map.
+--   * Sites: source_db is a list ("cwp_ecr, cwp_opspj") of every source that
+--     has the site, in priority order.
+--   * Source imports keep "SourceDb"; feature tables have source_db NOT NULL.
+--   * Duplicate files are skipped: Files.OriginalSharePointPath stays UNIQUE.
+--     A Completed copy (MigrationStatus = 2) wins, otherwise the source listed
+--     first; the other copies are skipped with their Metadata, Permissions and
+--     MigrationTasks (logged in _merge.conflict_log).
+--   * Every other table keeps all rows, so these unique keys are left out
+--     here: ADGroups.GroupName / GroupGuid, ScanProgress (LibraryName,
+--     SiteName), ActiveLanIds.LanId; Folders / sitemapping are unique per
+--     source_db. Clean up those duplicates, then run 07_restore_unique.sql:
+--     the app needs the keys back (e.g. ON CONFLICT ("LibraryName", "SiteName")).
 --   * Type drift -> widest type (nas/sg_permission_matrix.given_through = 1000).
 --   * bak_* tables and bak_MigrationTasks are excluded.
 --
@@ -31,7 +43,8 @@
 CREATE TABLE public."Sites" (
     "SiteId" integer NOT NULL,
     "SiteName" character varying(256) NOT NULL,
-    "CreatedAt" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    "CreatedAt" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    source_db text
 );
 
 -- -----------------------------------------------------------------------------
@@ -60,7 +73,8 @@ CREATE TABLE public."Files" (
     "SiteId" integer,
     "LastSyncedAt" timestamp without time zone,
     "DeltaSyncCount" integer DEFAULT 0 NOT NULL,
-    "HasUniquePermissions" boolean DEFAULT false NOT NULL
+    "HasUniquePermissions" boolean DEFAULT false NOT NULL,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."Metadata" (
@@ -70,7 +84,8 @@ CREATE TABLE public."Metadata" (
     "MetadataValue" character varying(4000),
     "DataType" character varying(50),
     "SiteName" character varying(256),
-    "SiteId" integer
+    "SiteId" integer,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."Permissions" (
@@ -87,7 +102,8 @@ CREATE TABLE public."Permissions" (
     "InheritedFromFolder" character varying(2000),
     "NtfsAppliedDate" timestamp without time zone,
     "SiteName" character varying(256),
-    "SiteId" integer
+    "SiteId" integer,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."ADGroups" (
@@ -98,7 +114,8 @@ CREATE TABLE public."ADGroups" (
     "CreatedDate" timestamp without time zone NOT NULL,
     "SourceSharePointGroup" character varying(256),
     "SiteName" character varying(256),
-    "SiteId" integer
+    "SiteId" integer,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."ADGroupMembers" (
@@ -108,7 +125,8 @@ CREATE TABLE public."ADGroupMembers" (
     "DisplayName" character varying(256),
     "AddedDate" timestamp without time zone NOT NULL,
     "SiteName" character varying(256),
-    "SiteId" integer
+    "SiteId" integer,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."PermissionSets" (
@@ -123,14 +141,16 @@ CREATE TABLE public."PermissionSets" (
     "ScanDate" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "SiteUrl" character varying(2000) NOT NULL,
     "SiteName" character varying(256),
-    "SiteId" integer
+    "SiteId" integer,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."PermissionSetEntries" (
     "PermissionSetEntryId" integer NOT NULL,
     "PermissionSetId" integer NOT NULL,
     "GroupName" character varying(256) NOT NULL,
-    "AccessLevel" character varying(256) NOT NULL
+    "AccessLevel" character varying(256) NOT NULL,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."FolderPermissions" (
@@ -145,7 +165,8 @@ CREATE TABLE public."FolderPermissions" (
     "ScanDate" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "SiteUrl" character varying(2000) NOT NULL,
     "SiteName" character varying(256),
-    "SiteId" integer
+    "SiteId" integer,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."PermissionMatrixSummaries" (
@@ -159,7 +180,8 @@ CREATE TABLE public."PermissionMatrixSummaries" (
     "TotalFoldersAnalyzed" integer DEFAULT 0 NOT NULL,
     "InheritanceRate" double precision DEFAULT 0 NOT NULL,
     "SiteName" character varying(256),
-    "SiteId" integer
+    "SiteId" integer,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."MigrationTasks" (
@@ -180,7 +202,8 @@ CREATE TABLE public."MigrationTasks" (
     "MaxRetries" integer DEFAULT 3 NOT NULL,
     "SiteName" character varying(256),
     "SiteId" integer,
-    "IsDeltaSync" boolean DEFAULT false NOT NULL
+    "IsDeltaSync" boolean DEFAULT false NOT NULL,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."ScanProgress" (
@@ -196,7 +219,8 @@ CREATE TABLE public."ScanProgress" (
     "LastScanCompletedAt" timestamp without time zone,
     "ErrorMessage" character varying(2000),
     "PermissionsResolved" boolean DEFAULT false NOT NULL,
-    "LastResolvedFileId" integer
+    "LastResolvedFileId" integer,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."FolderInheritanceBreaks" (
@@ -209,12 +233,14 @@ CREATE TABLE public."FolderInheritanceBreaks" (
     "PrincipalType" character varying(50) DEFAULT ''::character varying NOT NULL,
     "RoleDefinition" character varying(100) NOT NULL,
     "LoginName" character varying(500) DEFAULT ''::character varying NOT NULL,
-    "ScanDate" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    "ScanDate" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."ActiveLanIds" (
     "LanId" character varying(100) NOT NULL,
-    "UploadedAt" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    "UploadedAt" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    source_db character varying(64)
 );
 
 -- -----------------------------------------------------------------------------
@@ -227,7 +253,8 @@ CREATE TABLE public."Migration_Operation_Logs" (
     "ExecutionTime" timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     "SiteFilter" text,
     "AffectedRows" integer,
-    "Status" character varying(50)
+    "Status" character varying(50),
+    source_db character varying(64)
 );
 
 CREATE TABLE public."Migration_Path_History" (
@@ -235,7 +262,8 @@ CREATE TABLE public."Migration_Path_History" (
     "OpId" integer,
     "TaskId" integer,
     "OldPath" text,
-    "NewPath" text
+    "NewPath" text,
+    source_db character varying(64)
 );
 
 -- -----------------------------------------------------------------------------
@@ -262,6 +290,7 @@ CREATE TABLE public."MigrationTasks_Parsed" (
     "SiteName" character varying(256),
     "SiteId" integer,
     "IsDeltaSync" boolean,
+    source_db character varying(64),
     extracted_fn text,
     final_lv integer,
     "PathStatus" text,
@@ -280,7 +309,8 @@ CREATE TABLE public."NewChangePath_NEW" (
     "RemainPath" text,
     "NewPath" text,
     "NewPath_Len" integer,
-    "CreatedAt" timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    "CreatedAt" timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    source_db character varying(64)
 );
 
 CREATE TABLE public."Folder_Structure_Final_Analysis" (
@@ -294,7 +324,8 @@ CREATE TABLE public."Folder_Structure_Final_Analysis" (
     direct_violations bigint,
     acc_files bigint,
     acc_subfolders bigint,
-    acc_violations bigint
+    acc_violations bigint,
+    source_db character varying(64)
 );
 
 -- -----------------------------------------------------------------------------
@@ -478,7 +509,9 @@ ALTER TABLE public."PostgreSQL_SiteGroupPermission_20260503" ALTER COLUMN "ID" A
 );
 
 -- -----------------------------------------------------------------------------
--- Primary keys + unique constraints
+-- Primary keys + unique constraints. The natural-key unique constraints are
+-- NOT here, except Files.OriginalSharePointPath (duplicate files are skipped):
+-- see 07_restore_unique.sql.
 -- -----------------------------------------------------------------------------
 
 ALTER TABLE ONLY public."Sites" ADD CONSTRAINT "Sites_pkey" PRIMARY KEY ("SiteId");
@@ -488,8 +521,6 @@ ALTER TABLE ONLY public."Files" ADD CONSTRAINT "Files_OriginalSharePointPath_key
 ALTER TABLE ONLY public."Metadata" ADD CONSTRAINT "Metadata_pkey" PRIMARY KEY ("MetadataId");
 ALTER TABLE ONLY public."Permissions" ADD CONSTRAINT "Permissions_pkey" PRIMARY KEY ("PermissionId");
 ALTER TABLE ONLY public."ADGroups" ADD CONSTRAINT "ADGroups_pkey" PRIMARY KEY ("ADGroupId");
-ALTER TABLE ONLY public."ADGroups" ADD CONSTRAINT "ADGroups_GroupName_key" UNIQUE ("GroupName");
-ALTER TABLE ONLY public."ADGroups" ADD CONSTRAINT "ADGroups_GroupGuid_key" UNIQUE ("GroupGuid");
 ALTER TABLE ONLY public."ADGroupMembers" ADD CONSTRAINT "ADGroupMembers_pkey" PRIMARY KEY ("MemberId");
 ALTER TABLE ONLY public."ADGroupMembers" ADD CONSTRAINT "ADGroupMembers_ADGroupId_UserPrincipalName_key" UNIQUE ("ADGroupId", "UserPrincipalName");
 ALTER TABLE ONLY public."PermissionSets" ADD CONSTRAINT "PermissionSets_pkey" PRIMARY KEY ("PermissionSetId");
@@ -498,20 +529,18 @@ ALTER TABLE ONLY public."FolderPermissions" ADD CONSTRAINT "FolderPermissions_pk
 ALTER TABLE ONLY public."PermissionMatrixSummaries" ADD CONSTRAINT "PermissionMatrixSummaries_pkey" PRIMARY KEY ("PermissionMatrixSummaryId");
 ALTER TABLE ONLY public."MigrationTasks" ADD CONSTRAINT "MigrationTasks_pkey" PRIMARY KEY ("TaskId");
 ALTER TABLE ONLY public."ScanProgress" ADD CONSTRAINT "ScanProgress_pkey" PRIMARY KEY ("ScanProgressId");
-CREATE UNIQUE INDEX "IX_ScanProgress_Library_Site" ON public."ScanProgress" USING btree ("LibraryName", "SiteName");
 ALTER TABLE ONLY public."FolderInheritanceBreaks" ADD CONSTRAINT "FolderInheritanceBreaks_pkey" PRIMARY KEY ("FolderInheritanceBreakId");
-ALTER TABLE ONLY public."ActiveLanIds" ADD CONSTRAINT "ActiveLanIds_pkey" PRIMARY KEY ("LanId");
 ALTER TABLE ONLY public."Migration_Operation_Logs" ADD CONSTRAINT "Migration_Operation_Logs_pkey" PRIMARY KEY ("OpId");
 ALTER TABLE ONLY public."Migration_Path_History" ADD CONSTRAINT "Migration_Path_History_pkey" PRIMARY KEY ("HistoryId");
 ALTER TABLE ONLY public."MigrationTasks_Parsed" ADD CONSTRAINT "MigrationTasks_Parsed_pkey" PRIMARY KEY ("TaskId");
 ALTER TABLE ONLY public."NewChangePath_NEW" ADD CONSTRAINT "NewChangePath_NEW_pkey" PRIMARY KEY ("TaskId");
 ALTER TABLE ONLY public."PostgreSQL_PermissionMatrix_20260503" ADD CONSTRAINT "PostgreSQL_PermissionMatrix_20260503_pkey" PRIMARY KEY ("ID");
 ALTER TABLE ONLY public."PostgreSQL_SiteGroupPermission_20260503" ADD CONSTRAINT "PostgreSQL_SiteGroupPermission_20260503_pkey" PRIMARY KEY ("ID");
-ALTER TABLE ONLY public."Folders" ADD CONSTRAINT "Folders_pkey" PRIMARY KEY ("UniqueId");
+ALTER TABLE ONLY public."Folders" ADD CONSTRAINT "Folders_pkey" PRIMARY KEY ("UniqueId", source_db);
 ALTER TABLE ONLY public.break_path_mapping ADD CONSTRAINT pk_file_migration_mapping PRIMARY KEY (task_id, file_name);
 ALTER TABLE ONLY public.nas_permission_matrix ADD CONSTRAINT nas_permission_matrix_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.sg_permission_matrix ADD CONSTRAINT sg_permission_matrix_pkey PRIMARY KEY (id);
-ALTER TABLE ONLY public.sitemapping ADD CONSTRAINT sitemapping_pk PRIMARY KEY (sp2013_url);
+ALTER TABLE ONLY public.sitemapping ADD CONSTRAINT sitemapping_pk PRIMARY KEY (sp2013_url, source_db);
 
 -- -----------------------------------------------------------------------------
 -- Functions (identical in all 9 sources)
@@ -594,7 +623,7 @@ COMMENT ON TABLE public."ActiveLanIds" IS 'Active employee LAN IDs used to filte
 COMMENT ON TABLE public."Sites" IS 'One row per distinct SiteName; referenced by the SiteId column of every table that has SiteName';
 
 -- -----------------------------------------------------------------------------
--- Merge bookkeeping schema (provenance + conflict audit). Safe to keep; the
+-- Merge bookkeeping schema (sources, ID offsets, skipped duplicate files). Safe to keep; the
 -- app never reads it. Drop with:  DROP SCHEMA _merge CASCADE;
 -- -----------------------------------------------------------------------------
 
@@ -602,7 +631,7 @@ CREATE SCHEMA _merge;
 
 CREATE TABLE _merge.source (
     source_db     varchar(64) PRIMARY KEY,
-    load_order    integer NOT NULL UNIQUE,      -- 1 = highest priority (wins conflicts)
+    load_order    integer NOT NULL UNIQUE,      -- 1 = loaded first (wins a duplicate file)
     foreign_schema text NOT NULL
 );
 
@@ -616,20 +645,12 @@ CREATE TABLE _merge.id_offset (
     PRIMARY KEY (table_name, source_db)
 );
 
--- ADGroups are de-duplicated by GroupName: every source group maps to the
--- surviving target ADGroupId.
-CREATE TABLE _merge.adgroup_map (
-    source_db  varchar(64) NOT NULL,
-    old_id     integer NOT NULL,
-    new_id     integer NOT NULL,
-    PRIMARY KEY (source_db, old_id)
-);
-
--- Every row that was NOT copied 1:1 is recorded here.
---   action = 'skipped'  -> row (and its children) not loaded; a higher-priority
---                          source already owns the natural key
---   action = 'merged'   -> row folded into an existing target row
---   action = 'modified' -> row loaded with a changed value (see reason)
+-- Every duplicate file NOT copied, and every task of such a file:
+--   table_name = 'Files'          -> another copy of this OriginalSharePointPath was
+--                                    kept (winner_*: Completed, or listed first); its
+--                                    Metadata, Permissions and MigrationTasks are not loaded
+--   table_name = 'MigrationTasks' -> task of a skipped file; its MigrationTasks_Parsed,
+--                                    NewChangePath_NEW and break_path_mapping rows go too
 CREATE TABLE _merge.conflict_log (
     conflict_id      bigserial PRIMARY KEY,
     table_name       text NOT NULL,
@@ -642,7 +663,7 @@ CREATE TABLE _merge.conflict_log (
     reason           text NOT NULL
 );
 CREATE INDEX ix_conflict_log_lookup ON _merge.conflict_log (table_name, source_db, action, old_id);
-CREATE INDEX ix_conflict_log_key    ON _merge.conflict_log (table_name, source_db, action, natural_key);
+CREATE INDEX ix_conflict_log_key ON _merge.conflict_log USING hash (natural_key);
 
 -- Provenance helpers:  _merge.source_of('Files', 123456)  -> 'cwp_opspj'
 --                      _merge.old_id_of('Files', 123456)  -> FileId in that source

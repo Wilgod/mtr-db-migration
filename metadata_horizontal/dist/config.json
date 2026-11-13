@@ -2,7 +2,7 @@
   "Connection": {
     "Host": "localhost",
     "Port": 5432,
-    "Database": "MtrMigration_Consolidated",
+    "Database": "postgres",
     "User": "postgres",
     "SslMode": "",
     "Kerberos": false,
@@ -11,6 +11,7 @@
   },
   "HorizontalMetadata": {
     "TableName": "MetadataHorizontal",
+    "LinkToFiles": false,
     "Columns": {
       "ishareFileType": "FileType",
       "ishareParentDocumentNo": "ParentDocumentNo",
@@ -40,7 +41,23 @@
       "ishareFlagPadlock": "FlagPadlock",
       "ishareFlagUnreachable": "FlagUnreachable",
       "ishareHiddenCodeDescription": "FileDescription",
-      "UniqueId": "UniqueId"
+      "UniqueId": "UniqueId",
+      "FileLeafRef": "FileLeafRef",
+      "Author": "CreatedBy",
+      "Created_x0020_By": "CreatedByAccount",
+      "Created": "CreatedDate",
+      "Editor": "ModifiedBy",
+      "Modified_x0020_By": "ModifiedByAccount",
+      "Modified": "ModifiedDate",
+      "FileDirRef": "FolderPath",
+      "ishareProjectRecordRequestBy": "ProjectRecordRequestBy",
+      "ishareProjectRecordRequestTime": "ProjectRecordRequestTime",
+      "OriginalSharePointPath": "OriginalSharePointPath",
+      "ID": "SourceItemId",
+      "_UIVersionString": "SharePointVersion",
+      "File_x0020_Size": "FileSize",
+      "LibraryTitle": "DocumentLibrary",
+      "LibraryId": "LibraryId"
     },
     "ColumnMaxLength": 4000,
     "CurrentVersionOnly": true,

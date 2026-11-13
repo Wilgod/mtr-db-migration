@@ -103,8 +103,33 @@ FK_BOUNDED = {("Metadata", "FileId"), ("Permissions", "FileId"), ("MigrationTask
               ("Migration_Path_History", "OpId")}
 # (table, column) -> domain   (built from ID_DOMAINS)
 COL_DOMAIN = {tc: d for d, tcs in ID_DOMAINS.items() for tc in tcs}
-# ADGroupMembers.ADGroupId is remapped through _merge.adgroup_map instead (dedup by GroupName).
-del COL_DOMAIN[("ADGroupMembers", "ADGroupId")]
+
+# Duplicate files ARE skipped: one copy per OriginalSharePointPath is kept. A Completed
+# copy (MigrationStatus = 2) wins over one that is not; otherwise the source listed first
+# wins. The losing copy is skipped together with its Metadata, Permissions and
+# MigrationTasks (and the task rows of MigrationTasks_Parsed, NewChangePath_NEW,
+# break_path_mapping), all logged in _merge.conflict_log. See replace_files().
+# Every other table is NOT de-duplicated: all rows are loaded, tagged with source_db.
+# Natural keys that can then repeat (ADGroups.GroupName, ScanProgress (LibraryName,
+# SiteName), ActiveLanIds.LanId) have no unique key until 07_restore_unique.sql.
+
+# Rows dropped because a row they belong to was skipped:
+# table -> list of (table whose skipped rows are in conflict_log, column here holding its old id)
+SKIP_CASCADE = {
+    "Files": [("Files", "FileId")],
+    "Metadata": [("Files", "FileId")],
+    "Permissions": [("Files", "FileId")],
+    "MigrationTasks": [("MigrationTasks", "TaskId")],
+    "MigrationTasks_Parsed": [("MigrationTasks", "TaskId")],
+    "NewChangePath_NEW": [("MigrationTasks", "TaskId")],
+    "break_path_mapping": [("MigrationTasks", "task_id")],
+}
+# 08_restore_skipped.sql: the tables that lost rows to a skipped file, parents first.
+RESTORE_TABLES = ["Files", "Metadata", "Permissions", "MigrationTasks",
+                  "MigrationTasks_Parsed", "NewChangePath_NEW", "break_path_mapping"]
+# Tables whose sources must be copied in sources.json order: between two copies that are
+# both Completed (or both not), the first source wins.
+ORDERED_TABLES = {"Files"}
 
 # Values for target columns that a (older) source does not have.
 ABSENT_DEFAULTS = {
@@ -116,17 +141,6 @@ ABSENT_DEFAULTS = {
     ("ScanProgress", "PermissionsResolved"): "true",
     ("ScanProgress", "LastResolvedFileId"): "NULL",
     ("NewChangePath_NEW", "ExtendFolder"): "NULL",
-}
-
-# Non-app tables get a source tag column (value = source name).
-SOURCE_TAG = {
-    "PostgreSQL_PermissionMatrix_20260503": "SourceDb",
-    "PostgreSQL_SiteGroupPermission_20260503": "SourceDb",
-    "Folders": "source_db",
-    "break_path_mapping": "source_db",
-    "nas_permission_matrix": "source_db",
-    "sg_permission_matrix": "source_db",
-    "sitemapping": "source_db",
 }
 
 # Tables with GENERATED ALWAYS identity in the target.
@@ -144,32 +158,24 @@ LOAD_ORDER = [
     "Folders", "break_path_mapping", "nas_permission_matrix", "sg_permission_matrix", "sitemapping",
 ]
 
+# Every migrated table gets a source tag column (value = source name). Sites holds a
+# list of every source that has the site ("cwp_ecr, cwp_opspj"); see setup_parts().
+SOURCE_TAG = {t: "source_db" for t in LOAD_ORDER}
+SOURCE_TAG.update({"PostgreSQL_PermissionMatrix_20260503": "SourceDb",
+                   "PostgreSQL_SiteGroupPermission_20260503": "SourceDb"})
+
 # Source tables intentionally NOT migrated.
 EXCLUDED = re.compile(r"^bak_")
 
-# Child rows dropped because their parent row was skipped:
-# table -> list of (parent conflict table, child column)
-SKIP_CASCADE = {
-    "Files": [("Files", "FileId")],
-    "Metadata": [("Files", "FileId")],
-    "Permissions": [("Files", "FileId")],
-    "MigrationTasks": [("MigrationTasks", "TaskId")],
-    "ADGroupMembers": [("ADGroupMembers", "MemberId")],
-    "ScanProgress": [("ScanProgress", "ScanProgressId")],
-    "MigrationTasks_Parsed": [("MigrationTasks", "TaskId")],
-    "NewChangePath_NEW": [("MigrationTasks", "TaskId")],
-    "break_path_mapping": [("MigrationTasks", "task_id")],
-}
-
 # Two-step mode: a table can only be loaded with (or after) the tables it needs:
-# FK parents (04_finalize.sql), ADGroups for the group map, and the parents in
-# SKIP_CASCADE / FolderInheritanceBreaks whose skipped rows decide which rows drop.
+# its FK parents (04_finalize.sql) and the parents in SKIP_CASCADE, whose skipped
+# rows decide which of its rows drop.
 DEPENDS = {
     "Metadata": ["Files"], "Permissions": ["Files"], "MigrationTasks": ["Files"],
     "ADGroupMembers": ["ADGroups"], "PermissionSetEntries": ["PermissionSets"],
     "Migration_Path_History": ["Migration_Operation_Logs"],
     "MigrationTasks_Parsed": ["MigrationTasks"], "NewChangePath_NEW": ["MigrationTasks"],
-    "break_path_mapping": ["MigrationTasks"], "FolderInheritanceBreaks": ["ScanProgress"],
+    "break_path_mapping": ["MigrationTasks"],
 }
 
 
@@ -509,14 +515,17 @@ class Gen:
             out.append("")
         return "\n".join(out)
 
-    def stage_copies(self):
-        """[(source, table, staging table, COPY ... TO STDOUT for the source, COPY ... FROM STDIN for the target)]"""
+    def stage_copies(self, only=None):
+        """[(source, table, staging table, COPY ... TO STDOUT for the source, COPY ... FROM STDIN for the target)]
+        `only`: just these staging tables."""
         out = []
         for s in self.sources:
             for t in self.staged_tables(s):
                 cols = s["tables"][t]
                 sel = ", ".join(q(c) + ("::text" if col_type(d) != user_type_base(d) else "") for c, d in cols.items())
                 st = stage_table(s["name"], t)
+                if only is not None and st not in only:
+                    continue
                 out.append((s, t, st, f"COPY (SELECT {sel} FROM public.{q(t)}) TO STDOUT",
                             f"COPY public.{q(st)} (" + ", ".join(q(c) for c in cols) + ") FROM STDIN"))
         return out
@@ -581,8 +590,6 @@ class Gen:
                 exprs.append(lit(s["name"]))
             elif c == "SiteId":
                 exprs.append('st."SiteId"')  # via SITE_JOIN
-            elif (table, c) == ("ADGroupMembers", "ADGroupId"):
-                exprs.append("m.new_id")
             elif not self.has(s, table, c):
                 exprs.append(ABSENT_DEFAULTS.get((table, c), "DEFAULT" if "DEFAULT" in d else "NULL"))
             elif (table, c) in COL_DOMAIN:
@@ -591,113 +598,99 @@ class Gen:
                 exprs.append(f"{alias}.{q(c)}")
         return cols, exprs
 
-    def skip_where(self, s, table, alias="s"):
-        conds = []
-        for parent, col in SKIP_CASCADE.get(table, []):
-            conds.append(f"NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = {lit(parent)} "
-                         f"AND c.source_db = {lit(s['name'])} AND c.action = 'skipped' AND c.old_id = {alias}.{q(col)})")
-        if table == "FolderInheritanceBreaks":
-            conds.append(f"NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' "
-                         f"AND c.source_db = {lit(s['name'])} AND c.action = 'skipped' "
-                         f"AND c.natural_key = {alias}.\"LibraryName\" || ' | ' || {alias}.\"SiteName\")")
-        return conds
-
     def has_site_id(self, table):
         return any(c == "SiteId" for c, _ in self.target[table])
 
     def site_tables(self):
         return [t for t in self.target if t != "Sites" and self.has_site_id(t)]
 
-    def insert(self, s, table, extra_from="", extra_where=(), on_conflict=""):
-        if self.has_site_id(table):
-            extra_from += SITE_JOIN
+    def skip_where(self, s, table, alias="s", restore=False):
+        """Conditions that leave out the rows of `table` belonging to a skipped file / task.
+        restore=True: the opposite, only those rows (08_restore_skipped.sql)."""
+        conds = [f"EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = {lit(parent)} "
+                 f"AND c.source_db = {lit(s['name'])} AND c.action = 'skipped' AND c.old_id = {alias}.{q(col)})"
+                 for parent, col in SKIP_CASCADE.get(table, []) if self.has(s, table, col)]
+        if restore:
+            return ["(" + " OR ".join(conds) + ")"] if conds else ["false"]
+        return ["NOT " + c for c in conds]
+
+    def insert(self, s, table, restore=False):
+        """The rows of `table` in source `s`, IDs shifted by the source's offset, without
+        the rows of skipped duplicate files (SKIP_CASCADE). restore=True: only those rows,
+        and only if `table` was already copied from `s` (08_restore_skipped.sql)."""
+        extra_from = SITE_JOIN if self.has_site_id(table) else ""
         cols, exprs = self.select_list(s, table)
         if "DEFAULT" in exprs:  # can't use DEFAULT inside SELECT: drop those columns instead
             keep = [i for i, e in enumerate(exprs) if e != "DEFAULT"]
             cols, exprs = [cols[i] for i in keep], [exprs[i] for i in keep]
-        where = self.skip_where(s, table) + list(extra_where)
         overriding = " OVERRIDING SYSTEM VALUE" if table in IDENTITY_ALWAYS else ""
-        sql = (f"INSERT INTO public.{q(table)} (\n    " + ", ".join(cols) + f"\n){overriding}\nSELECT\n    "
-               + ",\n    ".join(exprs) + f"\nFROM {self.ft(s, table)} s{extra_from}")
-        if where:
-            sql += "\nWHERE " + "\n  AND ".join(where)
-        if on_conflict:
-            sql += "\n" + on_conflict
-        return sql + ";"
+        where = self.skip_where(s, table, restore=restore)
+        if restore:
+            where.append(f"EXISTS (SELECT 1 FROM restore_scope r WHERE r.table_name = {lit(table)} "
+                         f"AND r.source_db = {lit(s['name'])})")
+        return (f"INSERT INTO public.{q(table)} (\n    " + ", ".join(cols) + f"\n){overriding}\nSELECT\n    "
+                + ",\n    ".join(exprs) + f"\nFROM {self.ft(s, table)} s{extra_from}"
+                + ("\nWHERE " + "\n  AND ".join(where) if where else "")
+                + ("\nON CONFLICT DO NOTHING" if restore else "") + ";")
 
-    def log(self, table, s, old_id, natural_key, winner_src, winner_old, action, reason, from_sql, where=""):
+    def log(self, table, s, old_id, natural_key, winner_src, winner_old, reason, from_sql, where=""):
         return (f"INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)\n"
-                f"SELECT {lit(table)}, {lit(s['name'])}, {old_id}, {natural_key}, {winner_src}, {winner_old}, {lit(action)},\n"
+                f"SELECT {lit(table)}, {lit(s['name'])}, {old_id}, {natural_key}, {winner_src}, {winner_old}, 'skipped',\n"
                 f"       {lit(reason)}\n{from_sql}" + (f"\nWHERE {where}" if where else "") + ";")
+
+    def replace_files(self, s):
+        """A Completed copy (MigrationStatus = 2) beats a copy that is not: files of an earlier
+        source that this source has Completed while the loaded copy is not are taken out again,
+        with every row hanging off them, and logged as skipped (winner = this source). Their
+        rows not loaded yet are then skipped by SKIP_CASCADE, as for any skipped file."""
+        n, ft = s["name"], self.ft(s, "Files")
+        r = f"_merge_replace_{n}"
+        tasks = f'SELECT t."TaskId" FROM public."MigrationTasks" t JOIN {r} r ON t."FileId" = r.new_id'
+        return [
+            f"-- {n}: its Completed copies replace loaded copies that are not Completed",
+            f"CREATE TEMP TABLE {r} ON COMMIT DROP AS\n"
+            f'SELECT t."FileId" AS new_id, t.source_db AS old_src, _merge.old_id_of(\'Files\', t."FileId") AS old_id,\n'
+            f'       t."OriginalSharePointPath" AS path, s."FileId" AS winner_old_id\n'
+            f'FROM {ft} s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"\n'
+            f'WHERE s."MigrationStatus" = 2 AND t."MigrationStatus" IS DISTINCT FROM 2;',
+            f"INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)\n"
+            f"SELECT 'Files', old_src, old_id, path, {lit(n)}, winner_old_id, 'skipped',\n"
+            f"       'Not Completed, and the copy in {n} is Completed: replaced by it; its Metadata, Permissions and MigrationTasks are removed too'\n"
+            f"FROM {r};",
+            "-- copies skipped earlier in favour of a replaced row now point to the new winner",
+            f"UPDATE _merge.conflict_log c SET winner_source_db = {lit(n)}, winner_old_id = r.winner_old_id\n"
+            f"FROM {r} r WHERE c.table_name = 'Files' AND c.natural_key = r.path\n"
+            f"  AND c.winner_source_db = r.old_src AND c.winner_old_id = r.old_id;",
+            f"INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)\n"
+            f"SELECT 'MigrationTasks', t.source_db, _merge.old_id_of('MigrationTasks', t.\"TaskId\"), t.\"ServerRelativeUrl\", NULL, NULL, 'skipped',\n"
+            f"       'Task belongs to a Files row replaced by a Completed copy'\n"
+            f'FROM public."MigrationTasks" t JOIN {r} r ON t."FileId" = r.new_id;',
+            f'DELETE FROM public."MigrationTasks_Parsed" WHERE "TaskId" IN ({tasks});',
+            f'DELETE FROM public."NewChangePath_NEW" WHERE "TaskId" IN ({tasks});',
+            f"DELETE FROM public.break_path_mapping WHERE task_id IN ({tasks});",
+            f'DELETE FROM public."MigrationTasks" WHERE "FileId" IN (SELECT new_id FROM {r});',
+            f'DELETE FROM public."Metadata" WHERE "FileId" IN (SELECT new_id FROM {r});',
+            f'DELETE FROM public."Permissions" WHERE "FileId" IN (SELECT new_id FROM {r});',
+            f'DELETE FROM public."Files" WHERE "FileId" IN (SELECT new_id FROM {r});',
+        ]
 
     # -- per-table merge ----------------------------------------------------
     def merge_table(self, s, table):
-        n = s["name"]
-        ft = self.ft(s, table)
-        src_of = lambda dom, col: f"_merge.source_of({lit(dom)}, t.{q(col)})"
-        old_of = lambda dom, col: f"_merge.old_id_of({lit(dom)}, t.{q(col)})"
+        n, ft = s["name"], self.ft(s, table)
         parts = []
-
         if table == "Files":
+            if self.has(s, "Files", "MigrationStatus"):
+                parts.extend(self.replace_files(s))
             parts.append(self.log("Files", s, 's."FileId"', 's."OriginalSharePointPath"',
-                                  src_of("Files", "FileId"), old_of("Files", "FileId"), "skipped",
-                                  "OriginalSharePointPath already loaded from a higher-priority source; its Metadata, Permissions and MigrationTasks are skipped too",
+                                  't.source_db', '_merge.old_id_of(\'Files\', t."FileId")',
+                                  "OriginalSharePointPath already loaded (Completed, or neither copy Completed and that source is listed earlier); "
+                                  "its Metadata, Permissions and MigrationTasks are skipped too",
                                   f'FROM {ft} s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"'))
-            parts.append(self.insert(s, table))
-
         elif table == "MigrationTasks":
-            parts.append(self.log("MigrationTasks", s, 's."TaskId"', 's."ServerRelativeUrl"', "NULL", "NULL", "skipped",
-                                  "Task belongs to a skipped Files row",
-                                  f"FROM {ft} s",
+            parts.append(self.log("MigrationTasks", s, 's."TaskId"', 's."ServerRelativeUrl"', "NULL", "NULL",
+                                  "Task belongs to a skipped duplicate Files row", f"FROM {ft} s",
                                   f"""EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = {lit(n)} AND c.action = 'skipped' AND c.old_id = s."FileId")"""))
-            parts.append(self.insert(s, table))
-
-        elif table == "ADGroups":
-            parts.append(self.log("ADGroups", s, 's."ADGroupId"', 's."GroupName"',
-                                  src_of("ADGroups", "ADGroupId"), old_of("ADGroups", "ADGroupId"), "merged",
-                                  "GroupName already loaded from a higher-priority source; ADGroupMembers re-pointed to the surviving group",
-                                  f'FROM {ft} s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName"'))
-            parts.append(self.log("ADGroups", s, 's."ADGroupId"', 's."GroupName"',
-                                  src_of("ADGroups", "ADGroupId"), old_of("ADGroups", "ADGroupId"), "modified",
-                                  "GroupGuid already used by a different GroupName in the target; loaded with GroupGuid = NULL",
-                                  f'FROM {ft} s JOIN public."ADGroups" t ON t."GroupGuid" = s."GroupGuid"',
-                                  'NOT EXISTS (SELECT 1 FROM public."ADGroups" t2 WHERE t2."GroupName" = s."GroupName")'))
-            cols, exprs = self.select_list(s, table)
-            gi = cols.index(q("GroupGuid"))
-            exprs[gi] = 'CASE WHEN EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupGuid" = s."GroupGuid") THEN NULL ELSE s."GroupGuid" END'
-            parts.append(f'INSERT INTO public."ADGroups" (\n    ' + ", ".join(cols) + "\n)\nSELECT\n    " + ",\n    ".join(exprs)
-                         + f'\nFROM {ft} s{SITE_JOIN}\nWHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupName" = s."GroupName");')
-            parts.append(f"INSERT INTO _merge.adgroup_map (source_db, old_id, new_id)\n"
-                         f'SELECT {lit(n)}, s."ADGroupId", t."ADGroupId" FROM {ft} s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";')
-
-        elif table == "ADGroupMembers":
-            join = f' JOIN _merge.adgroup_map m ON m.source_db = {lit(n)} AND m.old_id = s."ADGroupId"'
-            parts.append(self.log("ADGroupMembers", s, 's."MemberId"', 's."UserPrincipalName"',
-                                  src_of("ADGroupMembers", "MemberId"), old_of("ADGroupMembers", "MemberId"), "skipped",
-                                  "User already a member of the merged group",
-                                  f'FROM {ft} s{join}\n  JOIN public."ADGroupMembers" t ON t."ADGroupId" = m.new_id AND t."UserPrincipalName" = s."UserPrincipalName"'))
-            parts.append(self.insert(s, table, extra_from=join))
-
-        elif table == "ScanProgress":
-            parts.append(self.log("ScanProgress", s, 's."ScanProgressId"', 's."LibraryName" || \' | \' || s."SiteName"',
-                                  src_of("ScanProgress", "ScanProgressId"), old_of("ScanProgress", "ScanProgressId"), "skipped",
-                                  "(LibraryName, SiteName) already loaded from a higher-priority source; FolderInheritanceBreaks of this library skipped too",
-                                  f'FROM {ft} s JOIN public."ScanProgress" t ON t."LibraryName" = s."LibraryName" AND t."SiteName" = s."SiteName"'))
-            parts.append(self.insert(s, table))
-
-        elif table == "ActiveLanIds":
-            parts.append(self.insert(s, table, on_conflict=
-                'ON CONFLICT ("LanId") DO UPDATE SET "UploadedAt" = GREATEST(public."ActiveLanIds"."UploadedAt", EXCLUDED."UploadedAt")'))
-
-        elif table in ("sitemapping", "Folders"):
-            key = "sp2013_url" if table == "sitemapping" else "UniqueId"
-            parts.append(self.log(table, s, "NULL", f"s.{q(key)}::text", "t.source_db", "NULL", "skipped",
-                                  f"{key} already loaded from a higher-priority source",
-                                  f"FROM {ft} s JOIN public.{q(table)} t ON t.{q(key)} = s.{q(key)}"))
-            parts.append(self.insert(s, table, on_conflict=f"ON CONFLICT ({q(key)}) DO NOTHING"))
-
-        else:
-            parts.append(self.insert(s, table))
+        parts.append(self.insert(s, table))
         return parts
 
     def merge(self):
@@ -710,6 +703,88 @@ class Gen:
             out.extend(self.table_parts(table))
         out.append("COMMIT;\n")
         return "\n".join(out)
+
+    # -- 08: put the skipped duplicate files back ---------------------------
+    def restore_needs(self):
+        """[(source, table)] the restore reads: the tables SKIP_CASCADE filters."""
+        return [(s, t) for t in RESTORE_TABLES for s in self.sources if self.has(s, t)]
+
+    def restore_skipped(self):
+        """Insert every row the merge skipped as a duplicate file (and its Metadata, Permissions,
+        MigrationTasks and their children), with the same new IDs it would have had. Nothing
+        already in the target is changed or deleted; only the unique key on
+        Files.OriginalSharePointPath is replaced by a plain index, since the same path is now
+        held once per source. Re-runnable: restored rows are marked 'restored' in conflict_log."""
+        needs = self.restore_needs()
+        out = [HEADER.format(name="08_restore_skipped.sql", what=
+            "Re-insert the duplicate files skipped by the merge, with their Metadata, Permissions,\n"
+            "-- MigrationTasks (+ MigrationTasks_Parsed, NewChangePath_NEW, break_path_mapping).\n"
+            "-- Nothing already in the target is deleted or changed. The sources (links or staging\n"
+            "-- copies) must still be there. Every table and source commits on its own, so a run that\n"
+            "-- stops (e.g. disk full) keeps what it did: run it again and it carries on from there.")]
+        out.append("\\set ON_ERROR_STOP on\n\\pset footer off\n\\timing on\n")
+        vac = ", ".join([f"public.{q(t)}" for t in dict.fromkeys(t for _, t in needs)] + ["_merge.conflict_log"])
+        out.append("-- give back the space of an earlier run that failed (its rolled-back rows)")
+        out.append(f"VACUUM {vac};\n")
+        out.append("\\echo '=== A. Rows skipped by the merge, to re-insert now ==='")
+        out.append("SELECT table_name, source_db, count(*) AS skipped_rows FROM _merge.conflict_log\n"
+                   "WHERE action = 'skipped' GROUP BY 1, 2 ORDER BY 1, 2;\n")
+        missing = ",\n    ".join(f"({lit(self.ft(s, t))})" for s, t in needs)
+        out.append("DO $$\nDECLARE m text;\nBEGIN\n"
+                   f"  SELECT string_agg(t, ', ') INTO m FROM (VALUES\n    {missing}\n  ) v(t) WHERE to_regclass(t) IS NULL;\n"
+                   "  IF m IS NOT NULL THEN\n"
+                   "    RAISE EXCEPTION 'The source tables are not reachable (links / staging copies removed?): %', m;\n"
+                   "  END IF;\nEND $$;\n")
+        out.append("-- which tables were copied from which source: only those get their skipped rows back\n"
+                   "-- (a table copied later takes them anyway, because they are no longer marked 'skipped')")
+        pairs = ",\n        ".join(f"({lit(t)}, {lit(s['name'])})" for s, t in needs)
+        out.append("CREATE TEMP TABLE restore_scope (table_name text, source_db text);\n"
+                   "DO $$\nBEGIN\n  IF to_regclass('_merge.loaded_source') IS NOT NULL THEN\n"
+                   "    INSERT INTO restore_scope SELECT table_name, source_db FROM _merge.loaded_source;\n"
+                   "  ELSE  -- built by the one-shot 03_merge.sql: every table from every source\n"
+                   f"    INSERT INTO restore_scope VALUES\n        {pairs};\n  END IF;\nEND $$;\n")
+        out.append("-- the same path is now held once per source: unique key -> plain index")
+        out.append('ALTER TABLE public."Files" DROP CONSTRAINT IF EXISTS "Files_OriginalSharePointPath_key";')
+        out.append('CREATE INDEX IF NOT EXISTS "IX_Files_OriginalSharePointPath" ON public."Files" '
+                   'USING btree ("OriginalSharePointPath");\n')
+        for t in RESTORE_TABLES:
+            srcs = [s for s, tt in needs if tt == t]
+            if not srcs:
+                continue
+            out.append(f"-- ===== {t} " + "=" * max(3, 70 - len(t)))
+            for s in srcs:
+                out.append(f"\\echo '{t} <- {s['name']} (skipped rows)'")
+                out.append(self.insert(s, t, restore=True) + "\n")
+        out.append("-- mark what is back (only after every child table is in); a row the source no longer\n"
+                   "-- has stays 'skipped'. One source at a time, with a VACUUM in between, so each\n"
+                   "-- UPDATE reuses the space the previous one freed.")
+        for t, idcol in (("Files", "FileId"), ("MigrationTasks", "TaskId")):
+            for s in self.sources:
+                out.append(f"\\echo 'mark {t} of {s['name']} as restored'")
+                out.append(f"UPDATE _merge.conflict_log c SET action = 'restored'\n"
+                           f"WHERE c.action = 'skipped' AND c.table_name = {lit(t)} AND c.source_db = {lit(s['name'])} AND EXISTS (\n"
+                           f"    SELECT 1 FROM public.{q(t)} x\n"
+                           f"    WHERE x.{q(idcol)} = c.old_id + (SELECT id_offset FROM _merge.id_offset o WHERE o.table_name = {lit(t)} AND o.source_db = {lit(s['name'])})\n"
+                           f"      AND x.source_db = c.source_db);")
+            out.append("VACUUM _merge.conflict_log;\n")
+        out.append("\\echo '=== B. Result ==='")
+        out.append("SELECT table_name, action, count(*) FROM _merge.conflict_log GROUP BY 1, 2 ORDER BY 1, 2;")
+        out.append("SELECT count(*) AS paths_held_more_than_once, sum(n) AS file_rows_with_those_paths\n"
+                   'FROM (SELECT count(*) AS n FROM public."Files" GROUP BY "OriginalSharePointPath" HAVING count(*) > 1) d;\n')
+        out.append("\\echo 'Done. Rows still marked skipped in B were not found in their source: their source table (staging copy) may be empty.'")
+        return "\n".join(out)
+
+    def restage_sql(self, tables):
+        """Staging layout, after Finish dropped the copies: re-create the staging tables of
+        `tables` ({staging table name}) so copy_to_stage() can fill them again."""
+        out = []
+        for s in self.sources:
+            for t in self.staged_tables(s):
+                st = stage_table(s["name"], t)
+                if st in tables:
+                    cols = [f"{q(c)} {col_type(d)}" for c, d in s["tables"][t].items()]
+                    out.append(f"CREATE UNLOGGED TABLE IF NOT EXISTS public.{q(st)} (\n    " + ",\n    ".join(cols) + "\n);")
+        return "\n".join(out) + "\n"
 
     # -- two-step mode (MtrDbMigration): prepare once, then load chosen tables ----
     def plan_tables(self):
@@ -767,8 +842,6 @@ class Gen:
             out.append("-- ===== Reload: empty these tables first =====")
             out.append("TRUNCATE " + ", ".join(f"public.{q(t)}" for t in rl) + " CASCADE;")
             out.append("DELETE FROM _merge.conflict_log WHERE table_name IN (" + ", ".join(lit(t) for t in rl) + ");")
-            if "ADGroups" in rl:
-                out.append("DELETE FROM _merge.adgroup_map;")
             out.append("DELETE FROM _merge.loaded_source WHERE table_name IN (" + ", ".join(lit(t) for t in rl) + ");")
             out.append("DELETE FROM _merge.loaded_table WHERE table_name IN (" + ", ".join(lit(t) for t in rl) + ");\n")
         for t in tables:
@@ -776,7 +849,7 @@ class Gen:
             out.append(f"INSERT INTO _merge.loaded_source (table_name, source_db) VALUES ({lit(t)}, {lit(n)});")
             out.append(f"INSERT INTO _merge.loaded_table (table_name, row_count) SELECT {lit(t)}, COUNT(*) FROM public.{q(t)}\n"
                        "ON CONFLICT (table_name) DO UPDATE SET row_count = EXCLUDED.row_count, loaded_at = now();\n")
-        out.append("-- the next source's conflict checks join against these tables: give the planner their new size")
+        out.append("-- the next source's duplicate checks join against these tables: give the planner their new size")
         out.append("ANALYZE " + ", ".join(f"public.{q(t)}" for t in tables) + ";\n")
         out.append("COMMIT;\n")
         return "\n".join(out)
@@ -792,12 +865,14 @@ class Gen:
         out.append(OVERFLOW_GUARD)
         out.append("-- ===== 2. Sites: every distinct non-empty SiteName from every source table =====")
         out.append("-- (GROUP BY is pushed down to the source server, so only the distinct names travel)")
-        parts = [f'SELECT "SiteName" AS n FROM {self.ft(s, t)} GROUP BY 1'
-                 for t in self.site_tables() for s in self.sources if self.has(s, t, "SiteName")]
+        out.append("-- source_db lists every source that has the site, in priority order")
+        parts = [f'SELECT "SiteName" AS n, {i} AS o, {lit(s["name"])} AS src FROM {self.ft(s, t)} GROUP BY 1'
+                 for t in self.site_tables() for i, s in enumerate(self.sources, 1) if self.has(s, t, "SiteName")]
         if parts:
-            out.append('INSERT INTO public."Sites" ("SiteId", "SiteName")\n'
-                       "SELECT row_number() OVER (ORDER BY n), n FROM (\n    " + "\n    UNION ".join(parts)
-                       + "\n) u WHERE n IS NOT NULL AND n <> '';\n")
+            out.append('INSERT INTO public."Sites" ("SiteId", "SiteName", source_db)\n'
+                       "SELECT row_number() OVER (ORDER BY n), n, string_agg(src, ', ' ORDER BY o) FROM (\n    "
+                       + "\n    UNION ".join(parts)
+                       + "\n) u WHERE n IS NOT NULL AND n <> '' GROUP BY n;\n")
         return out
 
     def table_parts(self, table, sources=None):
@@ -827,7 +902,7 @@ class Gen:
         n_src = len(self.sources)
         out = [HEADER.format(name="02_preflight.sql", what=
             "READ-ONLY report. Run after 01_attach_sources.sql and BEFORE 03_merge.sql.\n"
-            "-- Shows row counts, cross-source overlaps (which decide conflict handling) and\n"
+            "-- Shows row counts, cross-source duplicates (C: skipped; D-H: all loaded) and\n"
             "-- whether the re-numbered IDs fit in integer.")]
         out.append("\\pset footer off\n")
 
@@ -856,25 +931,33 @@ class Gen:
             srcs = [s for s in self.sources if self.has(s, table)]
             if len(srcs) < 2:
                 return
-            rows = [f"SELECT {lit(s['name'])} AS source_db, {keyexpr} AS k FROM {self.ft(s, table)}" for s in srcs]
+            # Keys are hashed to a 16-byte uuid and grouped once (no self-join): on ~25M long
+            # paths the old self-join spilled tens of GB to pgsql_tmp and filled the disk.
+            rows = [f"SELECT DISTINCT {lit(s['name'])} AS source_db, md5({keyexpr})::uuid AS h FROM {self.ft(s, table)}"
+                    for s in srcs]
             out.append(f"\\echo '=== {title} ==='")
-            out.append("WITH k AS (\n" + "\nUNION ALL ".join(rows) + "\n)\n"
-                       "SELECT a.source_db AS higher_priority, b.source_db AS lower_priority, COUNT(*) AS overlapping_keys\n"
-                       "FROM k a JOIN k b ON a.k = b.k JOIN _merge.source sa ON sa.source_db = a.source_db\n"
-                       "JOIN _merge.source sb ON sb.source_db = b.source_db AND sb.load_order > sa.load_order\n"
+            out.append("WITH g AS (\n  SELECT array_agg(source_db) AS srcs FROM (\n  "
+                       + "\n  UNION ALL ".join(rows) + "\n  ) k WHERE h IS NOT NULL GROUP BY h HAVING COUNT(*) > 1\n)\n"
+                       "SELECT sa.source_db, sb.source_db AS also_in, COUNT(*) AS duplicate_keys\n"
+                       "FROM g CROSS JOIN LATERAL unnest(g.srcs) a(s) CROSS JOIN LATERAL unnest(g.srcs) b(s)\n"
+                       "JOIN _merge.source sa ON sa.source_db = a.s\n"
+                       "JOIN _merge.source sb ON sb.source_db = b.s AND sb.load_order > sa.load_order\n"
                        "GROUP BY 1, 2 ORDER BY 1, 2;\n")
 
-        overlap("C. Files.OriginalSharePointPath overlaps (lower_priority rows will be SKIPPED with their Metadata/Permissions/Tasks)",
+        dup = " - ALL LOADED, clean up before 07_restore_unique.sql"
+        overlap("C. Files.OriginalSharePointPath in more than one source - one copy is kept (Completed first, "
+                "else the first source), the others are SKIPPED with their Metadata/Permissions/Tasks",
                 "Files", '"OriginalSharePointPath"')
-        overlap("D. ADGroups.GroupName overlaps (will be MERGED; members re-pointed)", "ADGroups", '"GroupName"')
-        overlap("E. ScanProgress (LibraryName, SiteName) overlaps (lower_priority rows SKIPPED)", "ScanProgress",
+        overlap("D. ADGroups.GroupName in more than one source" + dup, "ADGroups", '"GroupName"')
+        overlap("E. ScanProgress (LibraryName, SiteName) in more than one source" + dup, "ScanProgress",
                 '"LibraryName" || \' | \' || "SiteName"')
-        overlap("F. sitemapping.sp2013_url overlaps", "sitemapping", "sp2013_url")
-        overlap("G. Folders.UniqueId overlaps", "Folders", '"UniqueId"::text')
+        overlap("F. ActiveLanIds.LanId in more than one source" + dup, "ActiveLanIds", '"LanId"')
+        overlap("G. sitemapping.sp2013_url in more than one source" + dup, "sitemapping", "sp2013_url")
+        overlap("H. Folders.UniqueId in more than one source" + dup, "Folders", '"UniqueId"::text')
 
         sels = self.offsets_sql(into_table=False)
         if sels:
-            out.append("\\echo '=== H. Projected ID ranges (must stay <= 2147483647) ==='")
+            out.append("\\echo '=== I. Projected ID ranges (must stay <= 2147483647) ==='")
             out.append("SELECT domain, source_db, id_offset + 1 AS first_new_id, id_offset + src_max_id AS last_new_id,\n"
                        f"       CASE WHEN id_offset + src_max_id > {INT_MAX} THEN 'OVERFLOW' ELSE 'ok' END AS status\nFROM (\n"
                        + "\nUNION ALL\n".join(sels) + "\n) x(domain, source_db, id_offset, src_max_id)\nORDER BY domain, id_offset;\n")
@@ -882,7 +965,7 @@ class Gen:
         rows = [f'SELECT {lit(s["name"])} AS source_db, COUNT(*) AS processing FROM {self.ft(s, "MigrationTasks")} WHERE "Status" = 1'
                 for s in self.sources if self.has(s, "MigrationTasks", "Status")]
         if rows:
-            out.append("\\echo '=== I. Tasks still Processing (Status=1) in sources - reset_stale_tasks() will requeue them ==='")
+            out.append("\\echo '=== J. Tasks still Processing (Status=1) in sources - reset_stale_tasks() will requeue them ==='")
             out.append("SELECT * FROM (\n" + "\nUNION ALL ".join(rows) + "\n) x WHERE processing > 0;\n")
         return "\n".join(out)
 
@@ -892,56 +975,21 @@ class Gen:
         loaded, with every source each now holds)."""
         want = (lambda t, s: True) if tables is None else (lambda t, s: s["name"] in tables.get(t, ()))
         out = [HEADER.format(name="05_verify.sql", what=
-            "Row-count reconciliation: every source row is either in the target or in _merge.conflict_log.\n"
+            "Row-count reconciliation: every source row is in the target (tagged with its source_db)\n"
+            "-- or belongs to a duplicate file skipped in _merge.conflict_log.\n"
             "-- Run after 04_finalize.sql while the sources are still attached.")]
         out.append("\\pset footer off\n")
         rows = []
-        for t in LOAD_ORDER:
-            for s in self.sources:
-                if not want(t, s) or not self.has(s, t) or t in ("ActiveLanIds", "Folder_Structure_Final_Analysis"):
-                    continue
-                n = s["name"]
-                ft = self.ft(s, t)
-                src_cnt = f"(SELECT COUNT(*) FROM {ft})"
-                # rows we expect to have been dropped
-                skip_conds = self.skip_where(s, t, alias="x")
-                if t == "ADGroups":
-                    exp = f"(SELECT COUNT(*) FROM {ft}) - (SELECT COUNT(*) FROM _merge.conflict_log c WHERE c.table_name = 'ADGroups' AND c.source_db = {lit(n)} AND c.action = 'merged')"
-                elif skip_conds:
-                    exp = f"(SELECT COUNT(*) FROM {ft} x WHERE " + " AND ".join(skip_conds) + ")"
-                elif t in ("sitemapping", "Folders"):
-                    exp = f"(SELECT COUNT(*) FROM {ft}) - (SELECT COUNT(*) FROM _merge.conflict_log c WHERE c.table_name = {lit(t)} AND c.source_db = {lit(n)} AND c.action = 'skipped')"
-                else:
-                    exp = src_cnt
-                # rows actually in the target for this source
-                if t in SOURCE_TAG:
-                    tgt = f"(SELECT COUNT(*) FROM public.{q(t)} WHERE {q(SOURCE_TAG[t])} = {lit(n)})"
-                else:
-                    idcol = {"MigrationTasks_Parsed": "TaskId", "NewChangePath_NEW": "TaskId"}.get(t) or \
-                        next(c for (tt, c) in COL_DOMAIN if tt == t and COL_DOMAIN[(tt, c)] == t)
-                    dom = COL_DOMAIN[(t, idcol)]
-                    tgt = (f"(SELECT COUNT(*) FROM public.{q(t)} WHERE {q(idcol)} > {self.off(dom, n)} "
-                           f"AND {q(idcol)} <= {self.off(dom, n)} + (SELECT src_max_id FROM _merge.id_offset WHERE table_name = {lit(dom)} AND source_db = {lit(n)}))")
-                rows.append(f"SELECT {lit(t)} AS table_name, {lit(n)} AS source_db, {src_cnt} AS source_rows, {exp} AS expected, {tgt} AS loaded")
-        # union tables
-        lan = [f'SELECT "LanId" FROM {self.ft(s, "ActiveLanIds")}' for s in self.sources
-               if self.has(s, "ActiveLanIds") and want("ActiveLanIds", s)]
-        if lan:
-            rows.append("SELECT 'ActiveLanIds', '(all, de-duplicated)', (SELECT COUNT(*) FROM (" + " UNION ALL ".join(lan) + ") a), "
-                        "(SELECT COUNT(*) FROM (" + " UNION ".join(lan) + ") a), (SELECT COUNT(*) FROM public.\"ActiveLanIds\")")
-        fs = [f'SELECT 1 FROM {self.ft(s, "Folder_Structure_Final_Analysis")}' for s in self.sources
-              if self.has(s, "Folder_Structure_Final_Analysis") and want("Folder_Structure_Final_Analysis", s)]
-        if fs:
-            rows.append("SELECT 'Folder_Structure_Final_Analysis', '(all)', (SELECT COUNT(*) FROM (" + " UNION ALL ".join(fs) + ") a), "
-                        "(SELECT COUNT(*) FROM (" + " UNION ALL ".join(fs) + ") a), (SELECT COUNT(*) FROM public.\"Folder_Structure_Final_Analysis\")")
-        for t in sorted(self.generic):
-            tag = q(self.generic[t]["tag"])
+        for t in LOAD_ORDER + sorted(self.generic):
+            tag = q(self.generic[t]["tag"] if t in self.generic else SOURCE_TAG[t])
             for s in self.sources:
                 if self.has(s, t) and want(t, s):
                     cnt = f"(SELECT COUNT(*) FROM {self.ft(s, t)})"
-                    rows.append(f"SELECT {lit(t)}, {lit(s['name'])}, {cnt}, {cnt}, "
-                                f"(SELECT COUNT(*) FROM public.{q(t)} WHERE {tag} = {lit(s['name'])})")
-        out.append("CREATE TEMP TABLE verify_result AS\nSELECT *, source_rows - expected AS dropped_by_rule,\n"
+                    skip = self.skip_where(s, t, alias="x")
+                    exp = f"(SELECT COUNT(*) FROM {self.ft(s, t)} x WHERE " + " AND ".join(skip) + ")" if skip else cnt
+                    rows.append(f"SELECT {lit(t)} AS table_name, {lit(s['name'])} AS source_db, {cnt} AS source_rows, "
+                                f"{exp} AS expected, (SELECT COUNT(*) FROM public.{q(t)} WHERE {tag} = {lit(s['name'])}) AS loaded")
+        out.append("CREATE TEMP TABLE verify_result AS\nSELECT *, source_rows - expected AS skipped_duplicates,\n"
                    "       CASE WHEN expected = loaded THEN 'OK' ELSE 'MISMATCH' END AS status\nFROM (\n"
                    + "\nUNION ALL\n".join(rows) + "\n) v;\n")
         out.append("\\echo '=== Row reconciliation ==='")
@@ -955,11 +1003,11 @@ class Gen:
         out.append("SELECT * FROM verify_site ORDER BY table_name;\n")
         out.append("DO $$\nBEGIN\n  IF EXISTS (SELECT 1 FROM verify_site WHERE wrong_site_id > 0) THEN\n"
                    "    RAISE EXCEPTION 'VERIFY FAILED: SiteId does not match SiteName (see above)';\n  END IF;\nEND $$;\n")
-        out.append("\\echo '=== Conflict log summary ==='")
-        out.append("SELECT table_name, source_db, action, COUNT(*) FROM _merge.conflict_log GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;\n")
+        out.append("\\echo '=== Skipped duplicate files and tasks ==='")
+        out.append("SELECT table_name, source_db, COUNT(*) FROM _merge.conflict_log GROUP BY 1, 2 ORDER BY 1, 2;\n")
         out.append("DO $$\nBEGIN\n  IF EXISTS (SELECT 1 FROM verify_result WHERE status <> 'OK') THEN\n"
                    "    RAISE EXCEPTION 'VERIFY FAILED: see MISMATCH rows above';\n  END IF;\n"
-                   "  RAISE NOTICE 'VERIFY OK: every source row is loaded or accounted for in _merge.conflict_log';\nEND $$;\n")
+                   "  RAISE NOTICE 'VERIFY OK: every source row is loaded or skipped as a duplicate file';\nEND $$;\n")
         return "\n".join(out)
 
 
@@ -1002,44 +1050,92 @@ def _pump(src, dst):
                 pass
 
 
-def copy_to_stage(g, source_cmd, target_cmd, log=print, progress=None):
-    """Staging layout: pipe every source table into its staging table through this
-    client (source psql COPY ... TO STDOUT -> _pump -> target psql COPY ... FROM STDIN).
-    source_cmd(s) and target_cmd() -> (psql argv up to the connection args, env).
-    Returns [(staging table, rows)]; raises RuntimeError on the first failure."""
+def _feed(dst, data):
+    """Write `data` to a process's stdin, then close it (in a thread: it may be read slowly)."""
+    try:
+        dst.write(data)
+    except OSError:
+        pass  # the process stopped (it reports why)
+    finally:
+        try:
+            dst.close()
+        except OSError:
+            pass
+
+
+def _copy_one(source_cmd, target_cmd, s, t, st, out_sql, in_sql, feed=None):
+    """Pipe one source query into a staging table through this client: source psql
+    COPY ... TO STDOUT -> _pump -> target psql COPY ... FROM STDIN. With `feed` (bytes),
+    the source psql runs that script from stdin instead of `out_sql`. Returns the row count."""
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    copies = g.stage_copies()
+    src_argv, src_env = source_cmd(s)
+    dst_argv, dst_env = target_cmd()
+    src = subprocess.Popen(src_argv + ["-X", "-w", "-q", "-v", "ON_ERROR_STOP=1"]
+                           + (["-f", "-"] if feed is not None else ["-c", out_sql]),
+                           env=src_env, creationflags=flags,
+                           stdin=subprocess.PIPE if feed is not None else subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    dst = subprocess.Popen(dst_argv + ["-X", "-w", "-v", "ON_ERROR_STOP=1", "-c", in_sql],
+                           env=dst_env, creationflags=flags, stdin=subprocess.PIPE,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    src_err = []
+    threads = [threading.Thread(target=_pump, args=(src.stdout, dst.stdin), daemon=True),
+               threading.Thread(target=lambda: src_err.append(src.stderr.read()), daemon=True)]
+    if feed is not None:
+        threads.append(threading.Thread(target=_feed, args=(src.stdin, feed), daemon=True))
+    for th in threads:
+        th.start()
+    dst_out = dst.stdout.read().decode("utf-8", errors="replace").strip()
+    dst.wait()
+    if dst.returncode != 0:
+        src.kill()  # the target gave up: don't keep the source streaming
+    src.wait()
+    for th in threads:
+        th.join()
+    m = re.search(r"^COPY (\d+)$", dst_out, re.M)
+    if src.returncode != 0 or dst.returncode != 0 or not m:
+        err = b"".join(src_err).decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"copy {s['name']}.{t} -> {st} failed:\n{err}\n{dst_out}".rstrip())
+    return int(m.group(1))
+
+
+def copy_to_stage(g, source_cmd, target_cmd, log=print, progress=None, only=None):
+    """Staging layout: pipe every source table (or `only` these staging tables) into its
+    staging table through this client (source psql COPY ... TO STDOUT -> _pump -> target
+    psql COPY ... FROM STDIN). source_cmd(s) and target_cmd() -> (psql argv up to the
+    connection args, env). Returns [(staging table, rows)]; raises RuntimeError on the first failure."""
+    copies = g.stage_copies(only)
     counts = []
     for i, (s, t, st, out_sql, in_sql) in enumerate(copies, 1):
         if progress:
             progress(i, len(copies), s, t)
-        src_argv, src_env = source_cmd(s)
-        dst_argv, dst_env = target_cmd()
-        src = subprocess.Popen(src_argv + ["-X", "-w", "-q", "-v", "ON_ERROR_STOP=1", "-c", out_sql],
-                               env=src_env, creationflags=flags, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        dst = subprocess.Popen(dst_argv + ["-X", "-w", "-v", "ON_ERROR_STOP=1", "-c", in_sql],
-                               env=dst_env, creationflags=flags, stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        src_err = []
-        threads = [threading.Thread(target=_pump, args=(src.stdout, dst.stdin), daemon=True),
-                   threading.Thread(target=lambda: src_err.append(src.stderr.read()), daemon=True)]
-        for th in threads:
-            th.start()
-        dst_out = dst.stdout.read().decode("utf-8", errors="replace").strip()
-        dst.wait()
-        if dst.returncode != 0:
-            src.kill()  # the target gave up: don't keep the source streaming
-        src.wait()
-        for th in threads:
-            th.join()
-        m = re.search(r"^COPY (\d+)$", dst_out, re.M)
-        if src.returncode != 0 or dst.returncode != 0 or not m:
-            err = b"".join(src_err).decode("utf-8", errors="replace").strip()
-            raise RuntimeError(f"copy {s['name']}.{t} -> {st} failed:\n{err}\n{dst_out}".rstrip())
-        counts.append((st, int(m.group(1))))
-        log(f"{s['name']}.{t}: {int(m.group(1)):,} rows")
+        n = _copy_one(source_cmd, target_cmd, s, t, st, out_sql, in_sql)
+        counts.append((st, n))
+        log(f"{s['name']}.{t}: {n:,} rows")
     log(f"staged {len(copies)} tables, {sum(n for _, n in counts):,} rows")
+    return counts
+
+
+def copy_ids_to_stage(g, source_cmd, target_cmd, items, log=print, progress=None):
+    """Like copy_to_stage(), but only some rows: `items` is [(source, table, id column, ids)]
+    with ids as COPY text (one integer per line). In one session on the source, the ids go
+    into a temporary table, then only the rows whose id column is in it are copied.
+    Returns [(staging table, rows)]."""
+    copies = {(s["name"], t): (st, out_sql, in_sql) for s, t, st, out_sql, in_sql in
+              g.stage_copies({stage_table(s["name"], t) for s, t, _, _ in items})}
+    counts = []
+    for i, (s, t, col, ids) in enumerate(items, 1):
+        if progress:
+            progress(i, len(items), s, t)
+        st, out_sql, in_sql = copies[(s["name"], t)]
+        sel = out_sql[len("COPY (SELECT "):out_sql.index(f" FROM public.{q(t)})")]
+        ids = ids if not ids or ids.endswith("\n") else ids + "\n"
+        feed = ("CREATE TEMP TABLE _ids (id bigint PRIMARY KEY);\nCOPY _ids FROM STDIN;\n" + ids + "\\.\n"
+                "ANALYZE _ids;\n"
+                f"COPY (SELECT {sel} FROM public.{q(t)} WHERE {q(col)} IN (SELECT id FROM _ids)) TO STDOUT;\n")
+        n = _copy_one(source_cmd, target_cmd, s, t, st, None, in_sql, feed=feed.encode("utf-8"))
+        counts.append((st, n))
+        log(f"{s['name']}.{t}: {n:,} rows (only the skipped ones, {ids.count(chr(10)):,} ids)")
     return counts
 
 
@@ -1071,6 +1167,7 @@ def main(schema_loader=None, staging=False, out_dir=None):
         "03_prepare.sql": g.prepare(),
         "05_verify.sql": g.verify(),
         "06_detach_sources.sql": g.detach(),
+        "08_restore_skipped.sql": g.restore_skipped(),
     }
     if out_dir != SQL_DIR:
         os.makedirs(out_dir, exist_ok=True)

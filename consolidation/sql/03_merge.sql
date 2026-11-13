@@ -255,131 +255,157 @@ END $$;
 
 -- ===== 2. Sites: every distinct non-empty SiteName from every source table =====
 -- (GROUP BY is pushed down to the source server, so only the distinct names travel)
-INSERT INTO public."Sites" ("SiteId", "SiteName")
-SELECT row_number() OVER (ORDER BY n), n FROM (
-    SELECT "SiteName" AS n FROM "src_cwp_ecr"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."Folder_Structure_Final_Analysis" GROUP BY 1
-) u WHERE n IS NOT NULL AND n <> '';
+-- source_db lists every source that has the site, in priority order
+INSERT INTO public."Sites" ("SiteId", "SiteName", source_db)
+SELECT row_number() OVER (ORDER BY n), n, string_agg(src, ', ' ORDER BY o) FROM (
+    SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."Folder_Structure_Final_Analysis" GROUP BY 1
+) u WHERE n IS NOT NULL AND n <> '' GROUP BY n;
 
 -- ===== Files =================================================================
 \echo 'Files <- cwp_ecr'
+-- cwp_ecr: its Completed copies replace loaded copies that are not Completed
+CREATE TEMP TABLE _merge_replace_cwp_ecr ON COMMIT DROP AS
+SELECT t."FileId" AS new_id, t.source_db AS old_src, _merge.old_id_of('Files', t."FileId") AS old_id,
+       t."OriginalSharePointPath" AS path, s."FileId" AS winner_old_id
+FROM "src_cwp_ecr"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"
+WHERE s."MigrationStatus" = 2 AND t."MigrationStatus" IS DISTINCT FROM 2;
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'Files', 'cwp_ecr', s."FileId", s."OriginalSharePointPath", _merge.source_of('Files', t."FileId"), _merge.old_id_of('Files', t."FileId"), 'skipped',
-       'OriginalSharePointPath already loaded from a higher-priority source; its Metadata, Permissions and MigrationTasks are skipped too'
+SELECT 'Files', old_src, old_id, path, 'cwp_ecr', winner_old_id, 'skipped',
+       'Not Completed, and the copy in cwp_ecr is Completed: replaced by it; its Metadata, Permissions and MigrationTasks are removed too'
+FROM _merge_replace_cwp_ecr;
+-- copies skipped earlier in favour of a replaced row now point to the new winner
+UPDATE _merge.conflict_log c SET winner_source_db = 'cwp_ecr', winner_old_id = r.winner_old_id
+FROM _merge_replace_cwp_ecr r WHERE c.table_name = 'Files' AND c.natural_key = r.path
+  AND c.winner_source_db = r.old_src AND c.winner_old_id = r.old_id;
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'MigrationTasks', t.source_db, _merge.old_id_of('MigrationTasks', t."TaskId"), t."ServerRelativeUrl", NULL, NULL, 'skipped',
+       'Task belongs to a Files row replaced by a Completed copy'
+FROM public."MigrationTasks" t JOIN _merge_replace_cwp_ecr r ON t."FileId" = r.new_id;
+DELETE FROM public."MigrationTasks_Parsed" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_ecr r ON t."FileId" = r.new_id);
+DELETE FROM public."NewChangePath_NEW" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_ecr r ON t."FileId" = r.new_id);
+DELETE FROM public.break_path_mapping WHERE task_id IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_ecr r ON t."FileId" = r.new_id);
+DELETE FROM public."MigrationTasks" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_ecr);
+DELETE FROM public."Metadata" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_ecr);
+DELETE FROM public."Permissions" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_ecr);
+DELETE FROM public."Files" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_ecr);
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'Files', 'cwp_ecr', s."FileId", s."OriginalSharePointPath", t.source_db, _merge.old_id_of('Files', t."FileId"), 'skipped',
+       'OriginalSharePointPath already loaded (Completed, or neither copy Completed and that source is listed earlier); its Metadata, Permissions and MigrationTasks are skipped too'
 FROM "src_cwp_ecr"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath";
 INSERT INTO public."Files" (
-    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions"
+    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions", "source_db"
 )
 SELECT
     s."FileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_ecr'),
@@ -403,18 +429,44 @@ SELECT
     st."SiteId",
     s."LastSyncedAt",
     s."DeltaSyncCount",
-    s."HasUniquePermissions"
+    s."HasUniquePermissions",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."Files" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_ecr' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Files <- cwp_opspj3'
+-- cwp_opspj3: its Completed copies replace loaded copies that are not Completed
+CREATE TEMP TABLE _merge_replace_cwp_opspj3 ON COMMIT DROP AS
+SELECT t."FileId" AS new_id, t.source_db AS old_src, _merge.old_id_of('Files', t."FileId") AS old_id,
+       t."OriginalSharePointPath" AS path, s."FileId" AS winner_old_id
+FROM "src_cwp_opspj3"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"
+WHERE s."MigrationStatus" = 2 AND t."MigrationStatus" IS DISTINCT FROM 2;
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'Files', 'cwp_opspj3', s."FileId", s."OriginalSharePointPath", _merge.source_of('Files', t."FileId"), _merge.old_id_of('Files', t."FileId"), 'skipped',
-       'OriginalSharePointPath already loaded from a higher-priority source; its Metadata, Permissions and MigrationTasks are skipped too'
+SELECT 'Files', old_src, old_id, path, 'cwp_opspj3', winner_old_id, 'skipped',
+       'Not Completed, and the copy in cwp_opspj3 is Completed: replaced by it; its Metadata, Permissions and MigrationTasks are removed too'
+FROM _merge_replace_cwp_opspj3;
+-- copies skipped earlier in favour of a replaced row now point to the new winner
+UPDATE _merge.conflict_log c SET winner_source_db = 'cwp_opspj3', winner_old_id = r.winner_old_id
+FROM _merge_replace_cwp_opspj3 r WHERE c.table_name = 'Files' AND c.natural_key = r.path
+  AND c.winner_source_db = r.old_src AND c.winner_old_id = r.old_id;
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'MigrationTasks', t.source_db, _merge.old_id_of('MigrationTasks', t."TaskId"), t."ServerRelativeUrl", NULL, NULL, 'skipped',
+       'Task belongs to a Files row replaced by a Completed copy'
+FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj3 r ON t."FileId" = r.new_id;
+DELETE FROM public."MigrationTasks_Parsed" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj3 r ON t."FileId" = r.new_id);
+DELETE FROM public."NewChangePath_NEW" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj3 r ON t."FileId" = r.new_id);
+DELETE FROM public.break_path_mapping WHERE task_id IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj3 r ON t."FileId" = r.new_id);
+DELETE FROM public."MigrationTasks" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj3);
+DELETE FROM public."Metadata" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj3);
+DELETE FROM public."Permissions" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj3);
+DELETE FROM public."Files" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj3);
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'Files', 'cwp_opspj3', s."FileId", s."OriginalSharePointPath", t.source_db, _merge.old_id_of('Files', t."FileId"), 'skipped',
+       'OriginalSharePointPath already loaded (Completed, or neither copy Completed and that source is listed earlier); its Metadata, Permissions and MigrationTasks are skipped too'
 FROM "src_cwp_opspj3"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath";
 INSERT INTO public."Files" (
-    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions"
+    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions", "source_db"
 )
 SELECT
     s."FileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj3'),
@@ -438,18 +490,44 @@ SELECT
     st."SiteId",
     s."LastSyncedAt",
     s."DeltaSyncCount",
-    s."HasUniquePermissions"
+    s."HasUniquePermissions",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."Files" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj3' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Files <- cwp_opspj'
+-- cwp_opspj: its Completed copies replace loaded copies that are not Completed
+CREATE TEMP TABLE _merge_replace_cwp_opspj ON COMMIT DROP AS
+SELECT t."FileId" AS new_id, t.source_db AS old_src, _merge.old_id_of('Files', t."FileId") AS old_id,
+       t."OriginalSharePointPath" AS path, s."FileId" AS winner_old_id
+FROM "src_cwp_opspj"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"
+WHERE s."MigrationStatus" = 2 AND t."MigrationStatus" IS DISTINCT FROM 2;
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'Files', 'cwp_opspj', s."FileId", s."OriginalSharePointPath", _merge.source_of('Files', t."FileId"), _merge.old_id_of('Files', t."FileId"), 'skipped',
-       'OriginalSharePointPath already loaded from a higher-priority source; its Metadata, Permissions and MigrationTasks are skipped too'
+SELECT 'Files', old_src, old_id, path, 'cwp_opspj', winner_old_id, 'skipped',
+       'Not Completed, and the copy in cwp_opspj is Completed: replaced by it; its Metadata, Permissions and MigrationTasks are removed too'
+FROM _merge_replace_cwp_opspj;
+-- copies skipped earlier in favour of a replaced row now point to the new winner
+UPDATE _merge.conflict_log c SET winner_source_db = 'cwp_opspj', winner_old_id = r.winner_old_id
+FROM _merge_replace_cwp_opspj r WHERE c.table_name = 'Files' AND c.natural_key = r.path
+  AND c.winner_source_db = r.old_src AND c.winner_old_id = r.old_id;
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'MigrationTasks', t.source_db, _merge.old_id_of('MigrationTasks', t."TaskId"), t."ServerRelativeUrl", NULL, NULL, 'skipped',
+       'Task belongs to a Files row replaced by a Completed copy'
+FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj r ON t."FileId" = r.new_id;
+DELETE FROM public."MigrationTasks_Parsed" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj r ON t."FileId" = r.new_id);
+DELETE FROM public."NewChangePath_NEW" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj r ON t."FileId" = r.new_id);
+DELETE FROM public.break_path_mapping WHERE task_id IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj r ON t."FileId" = r.new_id);
+DELETE FROM public."MigrationTasks" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj);
+DELETE FROM public."Metadata" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj);
+DELETE FROM public."Permissions" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj);
+DELETE FROM public."Files" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj);
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'Files', 'cwp_opspj', s."FileId", s."OriginalSharePointPath", t.source_db, _merge.old_id_of('Files', t."FileId"), 'skipped',
+       'OriginalSharePointPath already loaded (Completed, or neither copy Completed and that source is listed earlier); its Metadata, Permissions and MigrationTasks are skipped too'
 FROM "src_cwp_opspj"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath";
 INSERT INTO public."Files" (
-    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions"
+    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions", "source_db"
 )
 SELECT
     s."FileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj'),
@@ -473,18 +551,44 @@ SELECT
     st."SiteId",
     s."LastSyncedAt",
     s."DeltaSyncCount",
-    s."HasUniquePermissions"
+    s."HasUniquePermissions",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."Files" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Files <- cwp_procon'
+-- cwp_procon: its Completed copies replace loaded copies that are not Completed
+CREATE TEMP TABLE _merge_replace_cwp_procon ON COMMIT DROP AS
+SELECT t."FileId" AS new_id, t.source_db AS old_src, _merge.old_id_of('Files', t."FileId") AS old_id,
+       t."OriginalSharePointPath" AS path, s."FileId" AS winner_old_id
+FROM "src_cwp_procon"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"
+WHERE s."MigrationStatus" = 2 AND t."MigrationStatus" IS DISTINCT FROM 2;
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'Files', 'cwp_procon', s."FileId", s."OriginalSharePointPath", _merge.source_of('Files', t."FileId"), _merge.old_id_of('Files', t."FileId"), 'skipped',
-       'OriginalSharePointPath already loaded from a higher-priority source; its Metadata, Permissions and MigrationTasks are skipped too'
+SELECT 'Files', old_src, old_id, path, 'cwp_procon', winner_old_id, 'skipped',
+       'Not Completed, and the copy in cwp_procon is Completed: replaced by it; its Metadata, Permissions and MigrationTasks are removed too'
+FROM _merge_replace_cwp_procon;
+-- copies skipped earlier in favour of a replaced row now point to the new winner
+UPDATE _merge.conflict_log c SET winner_source_db = 'cwp_procon', winner_old_id = r.winner_old_id
+FROM _merge_replace_cwp_procon r WHERE c.table_name = 'Files' AND c.natural_key = r.path
+  AND c.winner_source_db = r.old_src AND c.winner_old_id = r.old_id;
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'MigrationTasks', t.source_db, _merge.old_id_of('MigrationTasks', t."TaskId"), t."ServerRelativeUrl", NULL, NULL, 'skipped',
+       'Task belongs to a Files row replaced by a Completed copy'
+FROM public."MigrationTasks" t JOIN _merge_replace_cwp_procon r ON t."FileId" = r.new_id;
+DELETE FROM public."MigrationTasks_Parsed" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_procon r ON t."FileId" = r.new_id);
+DELETE FROM public."NewChangePath_NEW" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_procon r ON t."FileId" = r.new_id);
+DELETE FROM public.break_path_mapping WHERE task_id IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_procon r ON t."FileId" = r.new_id);
+DELETE FROM public."MigrationTasks" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_procon);
+DELETE FROM public."Metadata" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_procon);
+DELETE FROM public."Permissions" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_procon);
+DELETE FROM public."Files" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_procon);
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'Files', 'cwp_procon', s."FileId", s."OriginalSharePointPath", t.source_db, _merge.old_id_of('Files', t."FileId"), 'skipped',
+       'OriginalSharePointPath already loaded (Completed, or neither copy Completed and that source is listed earlier); its Metadata, Permissions and MigrationTasks are skipped too'
 FROM "src_cwp_procon"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath";
 INSERT INTO public."Files" (
-    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions"
+    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions", "source_db"
 )
 SELECT
     s."FileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_procon'),
@@ -508,18 +612,44 @@ SELECT
     st."SiteId",
     s."LastSyncedAt",
     s."DeltaSyncCount",
-    s."HasUniquePermissions"
+    s."HasUniquePermissions",
+    'cwp_procon'
 FROM "src_cwp_procon"."Files" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_procon' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Files <- cwp_opspj2'
+-- cwp_opspj2: its Completed copies replace loaded copies that are not Completed
+CREATE TEMP TABLE _merge_replace_cwp_opspj2 ON COMMIT DROP AS
+SELECT t."FileId" AS new_id, t.source_db AS old_src, _merge.old_id_of('Files', t."FileId") AS old_id,
+       t."OriginalSharePointPath" AS path, s."FileId" AS winner_old_id
+FROM "src_cwp_opspj2"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"
+WHERE s."MigrationStatus" = 2 AND t."MigrationStatus" IS DISTINCT FROM 2;
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'Files', 'cwp_opspj2', s."FileId", s."OriginalSharePointPath", _merge.source_of('Files', t."FileId"), _merge.old_id_of('Files', t."FileId"), 'skipped',
-       'OriginalSharePointPath already loaded from a higher-priority source; its Metadata, Permissions and MigrationTasks are skipped too'
+SELECT 'Files', old_src, old_id, path, 'cwp_opspj2', winner_old_id, 'skipped',
+       'Not Completed, and the copy in cwp_opspj2 is Completed: replaced by it; its Metadata, Permissions and MigrationTasks are removed too'
+FROM _merge_replace_cwp_opspj2;
+-- copies skipped earlier in favour of a replaced row now point to the new winner
+UPDATE _merge.conflict_log c SET winner_source_db = 'cwp_opspj2', winner_old_id = r.winner_old_id
+FROM _merge_replace_cwp_opspj2 r WHERE c.table_name = 'Files' AND c.natural_key = r.path
+  AND c.winner_source_db = r.old_src AND c.winner_old_id = r.old_id;
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'MigrationTasks', t.source_db, _merge.old_id_of('MigrationTasks', t."TaskId"), t."ServerRelativeUrl", NULL, NULL, 'skipped',
+       'Task belongs to a Files row replaced by a Completed copy'
+FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj2 r ON t."FileId" = r.new_id;
+DELETE FROM public."MigrationTasks_Parsed" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj2 r ON t."FileId" = r.new_id);
+DELETE FROM public."NewChangePath_NEW" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj2 r ON t."FileId" = r.new_id);
+DELETE FROM public.break_path_mapping WHERE task_id IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj2 r ON t."FileId" = r.new_id);
+DELETE FROM public."MigrationTasks" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj2);
+DELETE FROM public."Metadata" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj2);
+DELETE FROM public."Permissions" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj2);
+DELETE FROM public."Files" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj2);
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'Files', 'cwp_opspj2', s."FileId", s."OriginalSharePointPath", t.source_db, _merge.old_id_of('Files', t."FileId"), 'skipped',
+       'OriginalSharePointPath already loaded (Completed, or neither copy Completed and that source is listed earlier); its Metadata, Permissions and MigrationTasks are skipped too'
 FROM "src_cwp_opspj2"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath";
 INSERT INTO public."Files" (
-    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions"
+    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions", "source_db"
 )
 SELECT
     s."FileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj2'),
@@ -543,18 +673,44 @@ SELECT
     st."SiteId",
     s."LastSyncedAt",
     s."DeltaSyncCount",
-    s."HasUniquePermissions"
+    s."HasUniquePermissions",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."Files" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj2' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Files <- cwp_opspj4'
+-- cwp_opspj4: its Completed copies replace loaded copies that are not Completed
+CREATE TEMP TABLE _merge_replace_cwp_opspj4 ON COMMIT DROP AS
+SELECT t."FileId" AS new_id, t.source_db AS old_src, _merge.old_id_of('Files', t."FileId") AS old_id,
+       t."OriginalSharePointPath" AS path, s."FileId" AS winner_old_id
+FROM "src_cwp_opspj4"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"
+WHERE s."MigrationStatus" = 2 AND t."MigrationStatus" IS DISTINCT FROM 2;
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'Files', 'cwp_opspj4', s."FileId", s."OriginalSharePointPath", _merge.source_of('Files', t."FileId"), _merge.old_id_of('Files', t."FileId"), 'skipped',
-       'OriginalSharePointPath already loaded from a higher-priority source; its Metadata, Permissions and MigrationTasks are skipped too'
+SELECT 'Files', old_src, old_id, path, 'cwp_opspj4', winner_old_id, 'skipped',
+       'Not Completed, and the copy in cwp_opspj4 is Completed: replaced by it; its Metadata, Permissions and MigrationTasks are removed too'
+FROM _merge_replace_cwp_opspj4;
+-- copies skipped earlier in favour of a replaced row now point to the new winner
+UPDATE _merge.conflict_log c SET winner_source_db = 'cwp_opspj4', winner_old_id = r.winner_old_id
+FROM _merge_replace_cwp_opspj4 r WHERE c.table_name = 'Files' AND c.natural_key = r.path
+  AND c.winner_source_db = r.old_src AND c.winner_old_id = r.old_id;
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'MigrationTasks', t.source_db, _merge.old_id_of('MigrationTasks', t."TaskId"), t."ServerRelativeUrl", NULL, NULL, 'skipped',
+       'Task belongs to a Files row replaced by a Completed copy'
+FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj4 r ON t."FileId" = r.new_id;
+DELETE FROM public."MigrationTasks_Parsed" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj4 r ON t."FileId" = r.new_id);
+DELETE FROM public."NewChangePath_NEW" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj4 r ON t."FileId" = r.new_id);
+DELETE FROM public.break_path_mapping WHERE task_id IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_opspj4 r ON t."FileId" = r.new_id);
+DELETE FROM public."MigrationTasks" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj4);
+DELETE FROM public."Metadata" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj4);
+DELETE FROM public."Permissions" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj4);
+DELETE FROM public."Files" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_opspj4);
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'Files', 'cwp_opspj4', s."FileId", s."OriginalSharePointPath", t.source_db, _merge.old_id_of('Files', t."FileId"), 'skipped',
+       'OriginalSharePointPath already loaded (Completed, or neither copy Completed and that source is listed earlier); its Metadata, Permissions and MigrationTasks are skipped too'
 FROM "src_cwp_opspj4"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath";
 INSERT INTO public."Files" (
-    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions"
+    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions", "source_db"
 )
 SELECT
     s."FileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj4'),
@@ -578,18 +734,44 @@ SELECT
     st."SiteId",
     s."LastSyncedAt",
     s."DeltaSyncCount",
-    s."HasUniquePermissions"
+    s."HasUniquePermissions",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."Files" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj4' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Files <- cwp_xrl'
+-- cwp_xrl: its Completed copies replace loaded copies that are not Completed
+CREATE TEMP TABLE _merge_replace_cwp_xrl ON COMMIT DROP AS
+SELECT t."FileId" AS new_id, t.source_db AS old_src, _merge.old_id_of('Files', t."FileId") AS old_id,
+       t."OriginalSharePointPath" AS path, s."FileId" AS winner_old_id
+FROM "src_cwp_xrl"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"
+WHERE s."MigrationStatus" = 2 AND t."MigrationStatus" IS DISTINCT FROM 2;
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'Files', 'cwp_xrl', s."FileId", s."OriginalSharePointPath", _merge.source_of('Files', t."FileId"), _merge.old_id_of('Files', t."FileId"), 'skipped',
-       'OriginalSharePointPath already loaded from a higher-priority source; its Metadata, Permissions and MigrationTasks are skipped too'
+SELECT 'Files', old_src, old_id, path, 'cwp_xrl', winner_old_id, 'skipped',
+       'Not Completed, and the copy in cwp_xrl is Completed: replaced by it; its Metadata, Permissions and MigrationTasks are removed too'
+FROM _merge_replace_cwp_xrl;
+-- copies skipped earlier in favour of a replaced row now point to the new winner
+UPDATE _merge.conflict_log c SET winner_source_db = 'cwp_xrl', winner_old_id = r.winner_old_id
+FROM _merge_replace_cwp_xrl r WHERE c.table_name = 'Files' AND c.natural_key = r.path
+  AND c.winner_source_db = r.old_src AND c.winner_old_id = r.old_id;
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'MigrationTasks', t.source_db, _merge.old_id_of('MigrationTasks', t."TaskId"), t."ServerRelativeUrl", NULL, NULL, 'skipped',
+       'Task belongs to a Files row replaced by a Completed copy'
+FROM public."MigrationTasks" t JOIN _merge_replace_cwp_xrl r ON t."FileId" = r.new_id;
+DELETE FROM public."MigrationTasks_Parsed" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_xrl r ON t."FileId" = r.new_id);
+DELETE FROM public."NewChangePath_NEW" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_xrl r ON t."FileId" = r.new_id);
+DELETE FROM public.break_path_mapping WHERE task_id IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp_xrl r ON t."FileId" = r.new_id);
+DELETE FROM public."MigrationTasks" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_xrl);
+DELETE FROM public."Metadata" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_xrl);
+DELETE FROM public."Permissions" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_xrl);
+DELETE FROM public."Files" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp_xrl);
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'Files', 'cwp_xrl', s."FileId", s."OriginalSharePointPath", t.source_db, _merge.old_id_of('Files', t."FileId"), 'skipped',
+       'OriginalSharePointPath already loaded (Completed, or neither copy Completed and that source is listed earlier); its Metadata, Permissions and MigrationTasks are skipped too'
 FROM "src_cwp_xrl"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath";
 INSERT INTO public."Files" (
-    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions"
+    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions", "source_db"
 )
 SELECT
     s."FileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_xrl'),
@@ -613,18 +795,44 @@ SELECT
     st."SiteId",
     s."LastSyncedAt",
     s."DeltaSyncCount",
-    false
+    false,
+    'cwp_xrl'
 FROM "src_cwp_xrl"."Files" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_xrl' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Files <- cwp'
+-- cwp: its Completed copies replace loaded copies that are not Completed
+CREATE TEMP TABLE _merge_replace_cwp ON COMMIT DROP AS
+SELECT t."FileId" AS new_id, t.source_db AS old_src, _merge.old_id_of('Files', t."FileId") AS old_id,
+       t."OriginalSharePointPath" AS path, s."FileId" AS winner_old_id
+FROM "src_cwp"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"
+WHERE s."MigrationStatus" = 2 AND t."MigrationStatus" IS DISTINCT FROM 2;
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'Files', 'cwp', s."FileId", s."OriginalSharePointPath", _merge.source_of('Files', t."FileId"), _merge.old_id_of('Files', t."FileId"), 'skipped',
-       'OriginalSharePointPath already loaded from a higher-priority source; its Metadata, Permissions and MigrationTasks are skipped too'
+SELECT 'Files', old_src, old_id, path, 'cwp', winner_old_id, 'skipped',
+       'Not Completed, and the copy in cwp is Completed: replaced by it; its Metadata, Permissions and MigrationTasks are removed too'
+FROM _merge_replace_cwp;
+-- copies skipped earlier in favour of a replaced row now point to the new winner
+UPDATE _merge.conflict_log c SET winner_source_db = 'cwp', winner_old_id = r.winner_old_id
+FROM _merge_replace_cwp r WHERE c.table_name = 'Files' AND c.natural_key = r.path
+  AND c.winner_source_db = r.old_src AND c.winner_old_id = r.old_id;
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'MigrationTasks', t.source_db, _merge.old_id_of('MigrationTasks', t."TaskId"), t."ServerRelativeUrl", NULL, NULL, 'skipped',
+       'Task belongs to a Files row replaced by a Completed copy'
+FROM public."MigrationTasks" t JOIN _merge_replace_cwp r ON t."FileId" = r.new_id;
+DELETE FROM public."MigrationTasks_Parsed" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp r ON t."FileId" = r.new_id);
+DELETE FROM public."NewChangePath_NEW" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp r ON t."FileId" = r.new_id);
+DELETE FROM public.break_path_mapping WHERE task_id IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp r ON t."FileId" = r.new_id);
+DELETE FROM public."MigrationTasks" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp);
+DELETE FROM public."Metadata" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp);
+DELETE FROM public."Permissions" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp);
+DELETE FROM public."Files" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp);
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'Files', 'cwp', s."FileId", s."OriginalSharePointPath", t.source_db, _merge.old_id_of('Files', t."FileId"), 'skipped',
+       'OriginalSharePointPath already loaded (Completed, or neither copy Completed and that source is listed earlier); its Metadata, Permissions and MigrationTasks are skipped too'
 FROM "src_cwp"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath";
 INSERT INTO public."Files" (
-    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions"
+    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions", "source_db"
 )
 SELECT
     s."FileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp'),
@@ -648,18 +856,44 @@ SELECT
     st."SiteId",
     s."LastSyncedAt",
     s."DeltaSyncCount",
-    false
+    false,
+    'cwp'
 FROM "src_cwp"."Files" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Files <- cwp2'
+-- cwp2: its Completed copies replace loaded copies that are not Completed
+CREATE TEMP TABLE _merge_replace_cwp2 ON COMMIT DROP AS
+SELECT t."FileId" AS new_id, t.source_db AS old_src, _merge.old_id_of('Files', t."FileId") AS old_id,
+       t."OriginalSharePointPath" AS path, s."FileId" AS winner_old_id
+FROM "src_cwp2"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath"
+WHERE s."MigrationStatus" = 2 AND t."MigrationStatus" IS DISTINCT FROM 2;
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'Files', 'cwp2', s."FileId", s."OriginalSharePointPath", _merge.source_of('Files', t."FileId"), _merge.old_id_of('Files', t."FileId"), 'skipped',
-       'OriginalSharePointPath already loaded from a higher-priority source; its Metadata, Permissions and MigrationTasks are skipped too'
+SELECT 'Files', old_src, old_id, path, 'cwp2', winner_old_id, 'skipped',
+       'Not Completed, and the copy in cwp2 is Completed: replaced by it; its Metadata, Permissions and MigrationTasks are removed too'
+FROM _merge_replace_cwp2;
+-- copies skipped earlier in favour of a replaced row now point to the new winner
+UPDATE _merge.conflict_log c SET winner_source_db = 'cwp2', winner_old_id = r.winner_old_id
+FROM _merge_replace_cwp2 r WHERE c.table_name = 'Files' AND c.natural_key = r.path
+  AND c.winner_source_db = r.old_src AND c.winner_old_id = r.old_id;
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'MigrationTasks', t.source_db, _merge.old_id_of('MigrationTasks', t."TaskId"), t."ServerRelativeUrl", NULL, NULL, 'skipped',
+       'Task belongs to a Files row replaced by a Completed copy'
+FROM public."MigrationTasks" t JOIN _merge_replace_cwp2 r ON t."FileId" = r.new_id;
+DELETE FROM public."MigrationTasks_Parsed" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp2 r ON t."FileId" = r.new_id);
+DELETE FROM public."NewChangePath_NEW" WHERE "TaskId" IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp2 r ON t."FileId" = r.new_id);
+DELETE FROM public.break_path_mapping WHERE task_id IN (SELECT t."TaskId" FROM public."MigrationTasks" t JOIN _merge_replace_cwp2 r ON t."FileId" = r.new_id);
+DELETE FROM public."MigrationTasks" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp2);
+DELETE FROM public."Metadata" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp2);
+DELETE FROM public."Permissions" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp2);
+DELETE FROM public."Files" WHERE "FileId" IN (SELECT new_id FROM _merge_replace_cwp2);
+INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
+SELECT 'Files', 'cwp2', s."FileId", s."OriginalSharePointPath", t.source_db, _merge.old_id_of('Files', t."FileId"), 'skipped',
+       'OriginalSharePointPath already loaded (Completed, or neither copy Completed and that source is listed earlier); its Metadata, Permissions and MigrationTasks are skipped too'
 FROM "src_cwp2"."Files" s JOIN public."Files" t ON t."OriginalSharePointPath" = s."OriginalSharePointPath";
 INSERT INTO public."Files" (
-    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions"
+    "FileId", "FileName", "FilePath", "OriginalSharePointPath", "SharePointUniqueId", "FileSize", "CreatedDate", "ModifiedDate", "CreatedBy", "CreatedByLocalUser", "ModifiedBy", "ModifiedByLocalUser", "ContentType", "FileExtension", "MigrationDate", "MigrationStatus", "MigrationError", "SiteName", "SiteId", "LastSyncedAt", "DeltaSyncCount", "HasUniquePermissions", "source_db"
 )
 SELECT
     s."FileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp2'),
@@ -683,7 +917,8 @@ SELECT
     st."SiteId",
     s."LastSyncedAt",
     s."DeltaSyncCount",
-    false
+    false,
+    'cwp2'
 FROM "src_cwp2"."Files" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp2' AND c.action = 'skipped' AND c.old_id = s."FileId");
@@ -691,7 +926,7 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'File
 -- ===== Metadata ==============================================================
 \echo 'Metadata <- cwp_ecr'
 INSERT INTO public."Metadata" (
-    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId"
+    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MetadataId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Metadata' AND source_db = 'cwp_ecr'),
@@ -700,14 +935,15 @@ SELECT
     s."MetadataValue",
     s."DataType",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."Metadata" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_ecr' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Metadata <- cwp_opspj3'
 INSERT INTO public."Metadata" (
-    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId"
+    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MetadataId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Metadata' AND source_db = 'cwp_opspj3'),
@@ -716,14 +952,15 @@ SELECT
     s."MetadataValue",
     s."DataType",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."Metadata" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj3' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Metadata <- cwp_opspj'
 INSERT INTO public."Metadata" (
-    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId"
+    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MetadataId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Metadata' AND source_db = 'cwp_opspj'),
@@ -732,14 +969,15 @@ SELECT
     s."MetadataValue",
     s."DataType",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."Metadata" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Metadata <- cwp_procon'
 INSERT INTO public."Metadata" (
-    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId"
+    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MetadataId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Metadata' AND source_db = 'cwp_procon'),
@@ -748,14 +986,15 @@ SELECT
     s."MetadataValue",
     s."DataType",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_procon'
 FROM "src_cwp_procon"."Metadata" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_procon' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Metadata <- cwp_opspj2'
 INSERT INTO public."Metadata" (
-    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId"
+    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MetadataId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Metadata' AND source_db = 'cwp_opspj2'),
@@ -764,14 +1003,15 @@ SELECT
     s."MetadataValue",
     s."DataType",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."Metadata" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj2' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Metadata <- cwp_opspj4'
 INSERT INTO public."Metadata" (
-    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId"
+    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MetadataId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Metadata' AND source_db = 'cwp_opspj4'),
@@ -780,14 +1020,15 @@ SELECT
     s."MetadataValue",
     s."DataType",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."Metadata" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj4' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Metadata <- cwp_xrl'
 INSERT INTO public."Metadata" (
-    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId"
+    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MetadataId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Metadata' AND source_db = 'cwp_xrl'),
@@ -796,14 +1037,15 @@ SELECT
     s."MetadataValue",
     s."DataType",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."Metadata" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_xrl' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Metadata <- cwp'
 INSERT INTO public."Metadata" (
-    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId"
+    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MetadataId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Metadata' AND source_db = 'cwp'),
@@ -812,14 +1054,15 @@ SELECT
     s."MetadataValue",
     s."DataType",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp'
 FROM "src_cwp"."Metadata" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Metadata <- cwp2'
 INSERT INTO public."Metadata" (
-    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId"
+    "MetadataId", "FileId", "MetadataKey", "MetadataValue", "DataType", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MetadataId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Metadata' AND source_db = 'cwp2'),
@@ -828,7 +1071,8 @@ SELECT
     s."MetadataValue",
     s."DataType",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp2'
 FROM "src_cwp2"."Metadata" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp2' AND c.action = 'skipped' AND c.old_id = s."FileId");
@@ -836,7 +1080,7 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'File
 -- ===== Permissions ===========================================================
 \echo 'Permissions <- cwp_ecr'
 INSERT INTO public."Permissions" (
-    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId"
+    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Permissions' AND source_db = 'cwp_ecr'),
@@ -852,14 +1096,15 @@ SELECT
     s."InheritedFromFolder",
     s."NtfsAppliedDate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."Permissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_ecr' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Permissions <- cwp_opspj3'
 INSERT INTO public."Permissions" (
-    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId"
+    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Permissions' AND source_db = 'cwp_opspj3'),
@@ -875,14 +1120,15 @@ SELECT
     s."InheritedFromFolder",
     s."NtfsAppliedDate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."Permissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj3' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Permissions <- cwp_opspj'
 INSERT INTO public."Permissions" (
-    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId"
+    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Permissions' AND source_db = 'cwp_opspj'),
@@ -898,14 +1144,15 @@ SELECT
     s."InheritedFromFolder",
     s."NtfsAppliedDate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."Permissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Permissions <- cwp_procon'
 INSERT INTO public."Permissions" (
-    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId"
+    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Permissions' AND source_db = 'cwp_procon'),
@@ -921,14 +1168,15 @@ SELECT
     s."InheritedFromFolder",
     s."NtfsAppliedDate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_procon'
 FROM "src_cwp_procon"."Permissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_procon' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Permissions <- cwp_opspj2'
 INSERT INTO public."Permissions" (
-    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId"
+    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Permissions' AND source_db = 'cwp_opspj2'),
@@ -944,14 +1192,15 @@ SELECT
     s."InheritedFromFolder",
     s."NtfsAppliedDate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."Permissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj2' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Permissions <- cwp_opspj4'
 INSERT INTO public."Permissions" (
-    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId"
+    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Permissions' AND source_db = 'cwp_opspj4'),
@@ -967,14 +1216,15 @@ SELECT
     s."InheritedFromFolder",
     s."NtfsAppliedDate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."Permissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj4' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Permissions <- cwp_xrl'
 INSERT INTO public."Permissions" (
-    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId"
+    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Permissions' AND source_db = 'cwp_xrl'),
@@ -990,14 +1240,15 @@ SELECT
     s."InheritedFromFolder",
     s."NtfsAppliedDate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."Permissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_xrl' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Permissions <- cwp'
 INSERT INTO public."Permissions" (
-    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId"
+    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Permissions' AND source_db = 'cwp'),
@@ -1013,14 +1264,15 @@ SELECT
     s."InheritedFromFolder",
     s."NtfsAppliedDate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp'
 FROM "src_cwp"."Permissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp' AND c.action = 'skipped' AND c.old_id = s."FileId");
 
 \echo 'Permissions <- cwp2'
 INSERT INTO public."Permissions" (
-    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId"
+    "PermissionId", "FileId", "ADGroupName", "ADGroupGuid", "PermissionLevel", "OriginalSharePointGroup", "SharePointPrincipalType", "SharePointRoleDefinition", "NtfsPermissionApplied", "ApplyMethod", "InheritedFromFolder", "NtfsAppliedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Permissions' AND source_db = 'cwp2'),
@@ -1036,7 +1288,8 @@ SELECT
     s."InheritedFromFolder",
     s."NtfsAppliedDate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp2'
 FROM "src_cwp2"."Permissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp2' AND c.action = 'skipped' AND c.old_id = s."FileId");
@@ -1045,11 +1298,11 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'File
 \echo 'MigrationTasks <- cwp_ecr'
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
 SELECT 'MigrationTasks', 'cwp_ecr', s."TaskId", s."ServerRelativeUrl", NULL, NULL, 'skipped',
-       'Task belongs to a skipped Files row'
+       'Task belongs to a skipped duplicate Files row'
 FROM "src_cwp_ecr"."MigrationTasks" s
 WHERE EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_ecr' AND c.action = 'skipped' AND c.old_id = s."FileId");
 INSERT INTO public."MigrationTasks" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_ecr'),
@@ -1069,7 +1322,8 @@ SELECT
     s."MaxRetries",
     s."SiteName",
     st."SiteId",
-    s."IsDeltaSync"
+    s."IsDeltaSync",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."MigrationTasks" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_ecr' AND c.action = 'skipped' AND c.old_id = s."TaskId");
@@ -1077,11 +1331,11 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 \echo 'MigrationTasks <- cwp_opspj3'
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
 SELECT 'MigrationTasks', 'cwp_opspj3', s."TaskId", s."ServerRelativeUrl", NULL, NULL, 'skipped',
-       'Task belongs to a skipped Files row'
+       'Task belongs to a skipped duplicate Files row'
 FROM "src_cwp_opspj3"."MigrationTasks" s
 WHERE EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj3' AND c.action = 'skipped' AND c.old_id = s."FileId");
 INSERT INTO public."MigrationTasks" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj3'),
@@ -1101,7 +1355,8 @@ SELECT
     s."MaxRetries",
     s."SiteName",
     st."SiteId",
-    s."IsDeltaSync"
+    s."IsDeltaSync",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."MigrationTasks" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_opspj3' AND c.action = 'skipped' AND c.old_id = s."TaskId");
@@ -1109,11 +1364,11 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 \echo 'MigrationTasks <- cwp_opspj'
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
 SELECT 'MigrationTasks', 'cwp_opspj', s."TaskId", s."ServerRelativeUrl", NULL, NULL, 'skipped',
-       'Task belongs to a skipped Files row'
+       'Task belongs to a skipped duplicate Files row'
 FROM "src_cwp_opspj"."MigrationTasks" s
 WHERE EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj' AND c.action = 'skipped' AND c.old_id = s."FileId");
 INSERT INTO public."MigrationTasks" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj'),
@@ -1133,7 +1388,8 @@ SELECT
     s."MaxRetries",
     s."SiteName",
     st."SiteId",
-    s."IsDeltaSync"
+    s."IsDeltaSync",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."MigrationTasks" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_opspj' AND c.action = 'skipped' AND c.old_id = s."TaskId");
@@ -1141,11 +1397,11 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 \echo 'MigrationTasks <- cwp_procon'
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
 SELECT 'MigrationTasks', 'cwp_procon', s."TaskId", s."ServerRelativeUrl", NULL, NULL, 'skipped',
-       'Task belongs to a skipped Files row'
+       'Task belongs to a skipped duplicate Files row'
 FROM "src_cwp_procon"."MigrationTasks" s
 WHERE EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_procon' AND c.action = 'skipped' AND c.old_id = s."FileId");
 INSERT INTO public."MigrationTasks" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_procon'),
@@ -1165,7 +1421,8 @@ SELECT
     s."MaxRetries",
     s."SiteName",
     st."SiteId",
-    s."IsDeltaSync"
+    s."IsDeltaSync",
+    'cwp_procon'
 FROM "src_cwp_procon"."MigrationTasks" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_procon' AND c.action = 'skipped' AND c.old_id = s."TaskId");
@@ -1173,11 +1430,11 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 \echo 'MigrationTasks <- cwp_opspj2'
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
 SELECT 'MigrationTasks', 'cwp_opspj2', s."TaskId", s."ServerRelativeUrl", NULL, NULL, 'skipped',
-       'Task belongs to a skipped Files row'
+       'Task belongs to a skipped duplicate Files row'
 FROM "src_cwp_opspj2"."MigrationTasks" s
 WHERE EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj2' AND c.action = 'skipped' AND c.old_id = s."FileId");
 INSERT INTO public."MigrationTasks" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj2'),
@@ -1197,7 +1454,8 @@ SELECT
     s."MaxRetries",
     s."SiteName",
     st."SiteId",
-    s."IsDeltaSync"
+    s."IsDeltaSync",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."MigrationTasks" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_opspj2' AND c.action = 'skipped' AND c.old_id = s."TaskId");
@@ -1205,11 +1463,11 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 \echo 'MigrationTasks <- cwp_opspj4'
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
 SELECT 'MigrationTasks', 'cwp_opspj4', s."TaskId", s."ServerRelativeUrl", NULL, NULL, 'skipped',
-       'Task belongs to a skipped Files row'
+       'Task belongs to a skipped duplicate Files row'
 FROM "src_cwp_opspj4"."MigrationTasks" s
 WHERE EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_opspj4' AND c.action = 'skipped' AND c.old_id = s."FileId");
 INSERT INTO public."MigrationTasks" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj4'),
@@ -1229,7 +1487,8 @@ SELECT
     s."MaxRetries",
     s."SiteName",
     st."SiteId",
-    s."IsDeltaSync"
+    s."IsDeltaSync",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."MigrationTasks" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_opspj4' AND c.action = 'skipped' AND c.old_id = s."TaskId");
@@ -1237,11 +1496,11 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 \echo 'MigrationTasks <- cwp_xrl'
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
 SELECT 'MigrationTasks', 'cwp_xrl', s."TaskId", s."ServerRelativeUrl", NULL, NULL, 'skipped',
-       'Task belongs to a skipped Files row'
+       'Task belongs to a skipped duplicate Files row'
 FROM "src_cwp_xrl"."MigrationTasks" s
 WHERE EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp_xrl' AND c.action = 'skipped' AND c.old_id = s."FileId");
 INSERT INTO public."MigrationTasks" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_xrl'),
@@ -1261,7 +1520,8 @@ SELECT
     s."MaxRetries",
     s."SiteName",
     st."SiteId",
-    s."IsDeltaSync"
+    s."IsDeltaSync",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."MigrationTasks" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_xrl' AND c.action = 'skipped' AND c.old_id = s."TaskId");
@@ -1269,11 +1529,11 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 \echo 'MigrationTasks <- cwp'
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
 SELECT 'MigrationTasks', 'cwp', s."TaskId", s."ServerRelativeUrl", NULL, NULL, 'skipped',
-       'Task belongs to a skipped Files row'
+       'Task belongs to a skipped duplicate Files row'
 FROM "src_cwp"."MigrationTasks" s
 WHERE EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp' AND c.action = 'skipped' AND c.old_id = s."FileId");
 INSERT INTO public."MigrationTasks" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp'),
@@ -1293,7 +1553,8 @@ SELECT
     s."MaxRetries",
     s."SiteName",
     st."SiteId",
-    s."IsDeltaSync"
+    s."IsDeltaSync",
+    'cwp'
 FROM "src_cwp"."MigrationTasks" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp' AND c.action = 'skipped' AND c.old_id = s."TaskId");
@@ -1301,11 +1562,11 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 \echo 'MigrationTasks <- cwp2'
 INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
 SELECT 'MigrationTasks', 'cwp2', s."TaskId", s."ServerRelativeUrl", NULL, NULL, 'skipped',
-       'Task belongs to a skipped Files row'
+       'Task belongs to a skipped duplicate Files row'
 FROM "src_cwp2"."MigrationTasks" s
 WHERE EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Files' AND c.source_db = 'cwp2' AND c.action = 'skipped' AND c.old_id = s."FileId");
 INSERT INTO public."MigrationTasks" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp2'),
@@ -1325,458 +1586,315 @@ SELECT
     s."MaxRetries",
     s."SiteName",
     st."SiteId",
-    s."IsDeltaSync"
+    s."IsDeltaSync",
+    'cwp2'
 FROM "src_cwp2"."MigrationTasks" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp2' AND c.action = 'skipped' AND c.old_id = s."TaskId");
 
 -- ===== ADGroups ==============================================================
 \echo 'ADGroups <- cwp_ecr'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_ecr', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'merged',
-       'GroupName already loaded from a higher-priority source; ADGroupMembers re-pointed to the surviving group'
-FROM "src_cwp_ecr"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_ecr', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'modified',
-       'GroupGuid already used by a different GroupName in the target; loaded with GroupGuid = NULL'
-FROM "src_cwp_ecr"."ADGroups" s JOIN public."ADGroups" t ON t."GroupGuid" = s."GroupGuid"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t2 WHERE t2."GroupName" = s."GroupName");
 INSERT INTO public."ADGroups" (
-    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId"
+    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_ecr'),
     s."GroupName",
-    CASE WHEN EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupGuid" = s."GroupGuid") THEN NULL ELSE s."GroupGuid" END,
+    s."GroupGuid",
     s."Description",
     s."CreatedDate",
     s."SourceSharePointGroup",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."ADGroups" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupName" = s."GroupName");
-INSERT INTO _merge.adgroup_map (source_db, old_id, new_id)
-SELECT 'cwp_ecr', s."ADGroupId", t."ADGroupId" FROM "src_cwp_ecr"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroups <- cwp_opspj3'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_opspj3', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'merged',
-       'GroupName already loaded from a higher-priority source; ADGroupMembers re-pointed to the surviving group'
-FROM "src_cwp_opspj3"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_opspj3', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'modified',
-       'GroupGuid already used by a different GroupName in the target; loaded with GroupGuid = NULL'
-FROM "src_cwp_opspj3"."ADGroups" s JOIN public."ADGroups" t ON t."GroupGuid" = s."GroupGuid"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t2 WHERE t2."GroupName" = s."GroupName");
 INSERT INTO public."ADGroups" (
-    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId"
+    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_opspj3'),
     s."GroupName",
-    CASE WHEN EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupGuid" = s."GroupGuid") THEN NULL ELSE s."GroupGuid" END,
+    s."GroupGuid",
     s."Description",
     s."CreatedDate",
     s."SourceSharePointGroup",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."ADGroups" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupName" = s."GroupName");
-INSERT INTO _merge.adgroup_map (source_db, old_id, new_id)
-SELECT 'cwp_opspj3', s."ADGroupId", t."ADGroupId" FROM "src_cwp_opspj3"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroups <- cwp_opspj'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_opspj', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'merged',
-       'GroupName already loaded from a higher-priority source; ADGroupMembers re-pointed to the surviving group'
-FROM "src_cwp_opspj"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_opspj', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'modified',
-       'GroupGuid already used by a different GroupName in the target; loaded with GroupGuid = NULL'
-FROM "src_cwp_opspj"."ADGroups" s JOIN public."ADGroups" t ON t."GroupGuid" = s."GroupGuid"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t2 WHERE t2."GroupName" = s."GroupName");
 INSERT INTO public."ADGroups" (
-    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId"
+    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_opspj'),
     s."GroupName",
-    CASE WHEN EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupGuid" = s."GroupGuid") THEN NULL ELSE s."GroupGuid" END,
+    s."GroupGuid",
     s."Description",
     s."CreatedDate",
     s."SourceSharePointGroup",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."ADGroups" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupName" = s."GroupName");
-INSERT INTO _merge.adgroup_map (source_db, old_id, new_id)
-SELECT 'cwp_opspj', s."ADGroupId", t."ADGroupId" FROM "src_cwp_opspj"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroups <- cwp_procon'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_procon', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'merged',
-       'GroupName already loaded from a higher-priority source; ADGroupMembers re-pointed to the surviving group'
-FROM "src_cwp_procon"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_procon', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'modified',
-       'GroupGuid already used by a different GroupName in the target; loaded with GroupGuid = NULL'
-FROM "src_cwp_procon"."ADGroups" s JOIN public."ADGroups" t ON t."GroupGuid" = s."GroupGuid"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t2 WHERE t2."GroupName" = s."GroupName");
 INSERT INTO public."ADGroups" (
-    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId"
+    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_procon'),
     s."GroupName",
-    CASE WHEN EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupGuid" = s."GroupGuid") THEN NULL ELSE s."GroupGuid" END,
+    s."GroupGuid",
     s."Description",
     s."CreatedDate",
     s."SourceSharePointGroup",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_procon'
 FROM "src_cwp_procon"."ADGroups" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupName" = s."GroupName");
-INSERT INTO _merge.adgroup_map (source_db, old_id, new_id)
-SELECT 'cwp_procon', s."ADGroupId", t."ADGroupId" FROM "src_cwp_procon"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroups <- cwp_opspj2'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_opspj2', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'merged',
-       'GroupName already loaded from a higher-priority source; ADGroupMembers re-pointed to the surviving group'
-FROM "src_cwp_opspj2"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_opspj2', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'modified',
-       'GroupGuid already used by a different GroupName in the target; loaded with GroupGuid = NULL'
-FROM "src_cwp_opspj2"."ADGroups" s JOIN public."ADGroups" t ON t."GroupGuid" = s."GroupGuid"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t2 WHERE t2."GroupName" = s."GroupName");
 INSERT INTO public."ADGroups" (
-    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId"
+    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_opspj2'),
     s."GroupName",
-    CASE WHEN EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupGuid" = s."GroupGuid") THEN NULL ELSE s."GroupGuid" END,
+    s."GroupGuid",
     s."Description",
     s."CreatedDate",
     s."SourceSharePointGroup",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."ADGroups" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupName" = s."GroupName");
-INSERT INTO _merge.adgroup_map (source_db, old_id, new_id)
-SELECT 'cwp_opspj2', s."ADGroupId", t."ADGroupId" FROM "src_cwp_opspj2"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroups <- cwp_opspj4'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_opspj4', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'merged',
-       'GroupName already loaded from a higher-priority source; ADGroupMembers re-pointed to the surviving group'
-FROM "src_cwp_opspj4"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_opspj4', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'modified',
-       'GroupGuid already used by a different GroupName in the target; loaded with GroupGuid = NULL'
-FROM "src_cwp_opspj4"."ADGroups" s JOIN public."ADGroups" t ON t."GroupGuid" = s."GroupGuid"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t2 WHERE t2."GroupName" = s."GroupName");
 INSERT INTO public."ADGroups" (
-    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId"
+    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_opspj4'),
     s."GroupName",
-    CASE WHEN EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupGuid" = s."GroupGuid") THEN NULL ELSE s."GroupGuid" END,
+    s."GroupGuid",
     s."Description",
     s."CreatedDate",
     s."SourceSharePointGroup",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."ADGroups" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupName" = s."GroupName");
-INSERT INTO _merge.adgroup_map (source_db, old_id, new_id)
-SELECT 'cwp_opspj4', s."ADGroupId", t."ADGroupId" FROM "src_cwp_opspj4"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroups <- cwp_xrl'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_xrl', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'merged',
-       'GroupName already loaded from a higher-priority source; ADGroupMembers re-pointed to the surviving group'
-FROM "src_cwp_xrl"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp_xrl', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'modified',
-       'GroupGuid already used by a different GroupName in the target; loaded with GroupGuid = NULL'
-FROM "src_cwp_xrl"."ADGroups" s JOIN public."ADGroups" t ON t."GroupGuid" = s."GroupGuid"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t2 WHERE t2."GroupName" = s."GroupName");
 INSERT INTO public."ADGroups" (
-    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId"
+    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_xrl'),
     s."GroupName",
-    CASE WHEN EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupGuid" = s."GroupGuid") THEN NULL ELSE s."GroupGuid" END,
+    s."GroupGuid",
     s."Description",
     s."CreatedDate",
     s."SourceSharePointGroup",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."ADGroups" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupName" = s."GroupName");
-INSERT INTO _merge.adgroup_map (source_db, old_id, new_id)
-SELECT 'cwp_xrl', s."ADGroupId", t."ADGroupId" FROM "src_cwp_xrl"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroups <- cwp'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'merged',
-       'GroupName already loaded from a higher-priority source; ADGroupMembers re-pointed to the surviving group'
-FROM "src_cwp"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'modified',
-       'GroupGuid already used by a different GroupName in the target; loaded with GroupGuid = NULL'
-FROM "src_cwp"."ADGroups" s JOIN public."ADGroups" t ON t."GroupGuid" = s."GroupGuid"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t2 WHERE t2."GroupName" = s."GroupName");
 INSERT INTO public."ADGroups" (
-    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId"
+    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp'),
     s."GroupName",
-    CASE WHEN EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupGuid" = s."GroupGuid") THEN NULL ELSE s."GroupGuid" END,
+    s."GroupGuid",
     s."Description",
     s."CreatedDate",
     s."SourceSharePointGroup",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp'
 FROM "src_cwp"."ADGroups" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupName" = s."GroupName");
-INSERT INTO _merge.adgroup_map (source_db, old_id, new_id)
-SELECT 'cwp', s."ADGroupId", t."ADGroupId" FROM "src_cwp"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroups <- cwp2'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp2', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'merged',
-       'GroupName already loaded from a higher-priority source; ADGroupMembers re-pointed to the surviving group'
-FROM "src_cwp2"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroups', 'cwp2', s."ADGroupId", s."GroupName", _merge.source_of('ADGroups', t."ADGroupId"), _merge.old_id_of('ADGroups', t."ADGroupId"), 'modified',
-       'GroupGuid already used by a different GroupName in the target; loaded with GroupGuid = NULL'
-FROM "src_cwp2"."ADGroups" s JOIN public."ADGroups" t ON t."GroupGuid" = s."GroupGuid"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t2 WHERE t2."GroupName" = s."GroupName");
 INSERT INTO public."ADGroups" (
-    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId"
+    "ADGroupId", "GroupName", "GroupGuid", "Description", "CreatedDate", "SourceSharePointGroup", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp2'),
     s."GroupName",
-    CASE WHEN EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupGuid" = s."GroupGuid") THEN NULL ELSE s."GroupGuid" END,
+    s."GroupGuid",
     s."Description",
     s."CreatedDate",
     s."SourceSharePointGroup",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp2'
 FROM "src_cwp2"."ADGroups" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM public."ADGroups" t WHERE t."GroupName" = s."GroupName");
-INSERT INTO _merge.adgroup_map (source_db, old_id, new_id)
-SELECT 'cwp2', s."ADGroupId", t."ADGroupId" FROM "src_cwp2"."ADGroups" s JOIN public."ADGroups" t ON t."GroupName" = s."GroupName";
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 -- ===== ADGroupMembers ========================================================
 \echo 'ADGroupMembers <- cwp_ecr'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroupMembers', 'cwp_ecr', s."MemberId", s."UserPrincipalName", _merge.source_of('ADGroupMembers', t."MemberId"), _merge.old_id_of('ADGroupMembers', t."MemberId"), 'skipped',
-       'User already a member of the merged group'
-FROM "src_cwp_ecr"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_ecr' AND m.old_id = s."ADGroupId"
-  JOIN public."ADGroupMembers" t ON t."ADGroupId" = m.new_id AND t."UserPrincipalName" = s."UserPrincipalName";
 INSERT INTO public."ADGroupMembers" (
-    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId"
+    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MemberId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroupMembers' AND source_db = 'cwp_ecr'),
-    m.new_id,
+    s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_ecr'),
     s."UserPrincipalName",
     s."DisplayName",
     s."AddedDate",
     s."SiteName",
-    st."SiteId"
-FROM "src_cwp_ecr"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_ecr' AND m.old_id = s."ADGroupId"
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ADGroupMembers' AND c.source_db = 'cwp_ecr' AND c.action = 'skipped' AND c.old_id = s."MemberId");
+    st."SiteId",
+    'cwp_ecr'
+FROM "src_cwp_ecr"."ADGroupMembers" s
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroupMembers <- cwp_opspj3'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroupMembers', 'cwp_opspj3', s."MemberId", s."UserPrincipalName", _merge.source_of('ADGroupMembers', t."MemberId"), _merge.old_id_of('ADGroupMembers', t."MemberId"), 'skipped',
-       'User already a member of the merged group'
-FROM "src_cwp_opspj3"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_opspj3' AND m.old_id = s."ADGroupId"
-  JOIN public."ADGroupMembers" t ON t."ADGroupId" = m.new_id AND t."UserPrincipalName" = s."UserPrincipalName";
 INSERT INTO public."ADGroupMembers" (
-    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId"
+    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MemberId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroupMembers' AND source_db = 'cwp_opspj3'),
-    m.new_id,
+    s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_opspj3'),
     s."UserPrincipalName",
     s."DisplayName",
     s."AddedDate",
     s."SiteName",
-    st."SiteId"
-FROM "src_cwp_opspj3"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_opspj3' AND m.old_id = s."ADGroupId"
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ADGroupMembers' AND c.source_db = 'cwp_opspj3' AND c.action = 'skipped' AND c.old_id = s."MemberId");
+    st."SiteId",
+    'cwp_opspj3'
+FROM "src_cwp_opspj3"."ADGroupMembers" s
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroupMembers <- cwp_opspj'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroupMembers', 'cwp_opspj', s."MemberId", s."UserPrincipalName", _merge.source_of('ADGroupMembers', t."MemberId"), _merge.old_id_of('ADGroupMembers', t."MemberId"), 'skipped',
-       'User already a member of the merged group'
-FROM "src_cwp_opspj"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_opspj' AND m.old_id = s."ADGroupId"
-  JOIN public."ADGroupMembers" t ON t."ADGroupId" = m.new_id AND t."UserPrincipalName" = s."UserPrincipalName";
 INSERT INTO public."ADGroupMembers" (
-    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId"
+    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MemberId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroupMembers' AND source_db = 'cwp_opspj'),
-    m.new_id,
+    s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_opspj'),
     s."UserPrincipalName",
     s."DisplayName",
     s."AddedDate",
     s."SiteName",
-    st."SiteId"
-FROM "src_cwp_opspj"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_opspj' AND m.old_id = s."ADGroupId"
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ADGroupMembers' AND c.source_db = 'cwp_opspj' AND c.action = 'skipped' AND c.old_id = s."MemberId");
+    st."SiteId",
+    'cwp_opspj'
+FROM "src_cwp_opspj"."ADGroupMembers" s
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroupMembers <- cwp_procon'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroupMembers', 'cwp_procon', s."MemberId", s."UserPrincipalName", _merge.source_of('ADGroupMembers', t."MemberId"), _merge.old_id_of('ADGroupMembers', t."MemberId"), 'skipped',
-       'User already a member of the merged group'
-FROM "src_cwp_procon"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_procon' AND m.old_id = s."ADGroupId"
-  JOIN public."ADGroupMembers" t ON t."ADGroupId" = m.new_id AND t."UserPrincipalName" = s."UserPrincipalName";
 INSERT INTO public."ADGroupMembers" (
-    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId"
+    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MemberId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroupMembers' AND source_db = 'cwp_procon'),
-    m.new_id,
+    s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_procon'),
     s."UserPrincipalName",
     s."DisplayName",
     s."AddedDate",
     s."SiteName",
-    st."SiteId"
-FROM "src_cwp_procon"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_procon' AND m.old_id = s."ADGroupId"
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ADGroupMembers' AND c.source_db = 'cwp_procon' AND c.action = 'skipped' AND c.old_id = s."MemberId");
+    st."SiteId",
+    'cwp_procon'
+FROM "src_cwp_procon"."ADGroupMembers" s
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroupMembers <- cwp_opspj2'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroupMembers', 'cwp_opspj2', s."MemberId", s."UserPrincipalName", _merge.source_of('ADGroupMembers', t."MemberId"), _merge.old_id_of('ADGroupMembers', t."MemberId"), 'skipped',
-       'User already a member of the merged group'
-FROM "src_cwp_opspj2"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_opspj2' AND m.old_id = s."ADGroupId"
-  JOIN public."ADGroupMembers" t ON t."ADGroupId" = m.new_id AND t."UserPrincipalName" = s."UserPrincipalName";
 INSERT INTO public."ADGroupMembers" (
-    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId"
+    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MemberId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroupMembers' AND source_db = 'cwp_opspj2'),
-    m.new_id,
+    s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_opspj2'),
     s."UserPrincipalName",
     s."DisplayName",
     s."AddedDate",
     s."SiteName",
-    st."SiteId"
-FROM "src_cwp_opspj2"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_opspj2' AND m.old_id = s."ADGroupId"
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ADGroupMembers' AND c.source_db = 'cwp_opspj2' AND c.action = 'skipped' AND c.old_id = s."MemberId");
+    st."SiteId",
+    'cwp_opspj2'
+FROM "src_cwp_opspj2"."ADGroupMembers" s
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroupMembers <- cwp_opspj4'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroupMembers', 'cwp_opspj4', s."MemberId", s."UserPrincipalName", _merge.source_of('ADGroupMembers', t."MemberId"), _merge.old_id_of('ADGroupMembers', t."MemberId"), 'skipped',
-       'User already a member of the merged group'
-FROM "src_cwp_opspj4"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_opspj4' AND m.old_id = s."ADGroupId"
-  JOIN public."ADGroupMembers" t ON t."ADGroupId" = m.new_id AND t."UserPrincipalName" = s."UserPrincipalName";
 INSERT INTO public."ADGroupMembers" (
-    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId"
+    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MemberId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroupMembers' AND source_db = 'cwp_opspj4'),
-    m.new_id,
+    s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_opspj4'),
     s."UserPrincipalName",
     s."DisplayName",
     s."AddedDate",
     s."SiteName",
-    st."SiteId"
-FROM "src_cwp_opspj4"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_opspj4' AND m.old_id = s."ADGroupId"
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ADGroupMembers' AND c.source_db = 'cwp_opspj4' AND c.action = 'skipped' AND c.old_id = s."MemberId");
+    st."SiteId",
+    'cwp_opspj4'
+FROM "src_cwp_opspj4"."ADGroupMembers" s
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroupMembers <- cwp_xrl'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroupMembers', 'cwp_xrl', s."MemberId", s."UserPrincipalName", _merge.source_of('ADGroupMembers', t."MemberId"), _merge.old_id_of('ADGroupMembers', t."MemberId"), 'skipped',
-       'User already a member of the merged group'
-FROM "src_cwp_xrl"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_xrl' AND m.old_id = s."ADGroupId"
-  JOIN public."ADGroupMembers" t ON t."ADGroupId" = m.new_id AND t."UserPrincipalName" = s."UserPrincipalName";
 INSERT INTO public."ADGroupMembers" (
-    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId"
+    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MemberId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroupMembers' AND source_db = 'cwp_xrl'),
-    m.new_id,
+    s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp_xrl'),
     s."UserPrincipalName",
     s."DisplayName",
     s."AddedDate",
     s."SiteName",
-    st."SiteId"
-FROM "src_cwp_xrl"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp_xrl' AND m.old_id = s."ADGroupId"
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ADGroupMembers' AND c.source_db = 'cwp_xrl' AND c.action = 'skipped' AND c.old_id = s."MemberId");
+    st."SiteId",
+    'cwp_xrl'
+FROM "src_cwp_xrl"."ADGroupMembers" s
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroupMembers <- cwp'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroupMembers', 'cwp', s."MemberId", s."UserPrincipalName", _merge.source_of('ADGroupMembers', t."MemberId"), _merge.old_id_of('ADGroupMembers', t."MemberId"), 'skipped',
-       'User already a member of the merged group'
-FROM "src_cwp"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp' AND m.old_id = s."ADGroupId"
-  JOIN public."ADGroupMembers" t ON t."ADGroupId" = m.new_id AND t."UserPrincipalName" = s."UserPrincipalName";
 INSERT INTO public."ADGroupMembers" (
-    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId"
+    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MemberId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroupMembers' AND source_db = 'cwp'),
-    m.new_id,
+    s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp'),
     s."UserPrincipalName",
     s."DisplayName",
     s."AddedDate",
     s."SiteName",
-    st."SiteId"
-FROM "src_cwp"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp' AND m.old_id = s."ADGroupId"
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ADGroupMembers' AND c.source_db = 'cwp' AND c.action = 'skipped' AND c.old_id = s."MemberId");
+    st."SiteId",
+    'cwp'
+FROM "src_cwp"."ADGroupMembers" s
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ADGroupMembers <- cwp2'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ADGroupMembers', 'cwp2', s."MemberId", s."UserPrincipalName", _merge.source_of('ADGroupMembers', t."MemberId"), _merge.old_id_of('ADGroupMembers', t."MemberId"), 'skipped',
-       'User already a member of the merged group'
-FROM "src_cwp2"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp2' AND m.old_id = s."ADGroupId"
-  JOIN public."ADGroupMembers" t ON t."ADGroupId" = m.new_id AND t."UserPrincipalName" = s."UserPrincipalName";
 INSERT INTO public."ADGroupMembers" (
-    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId"
+    "MemberId", "ADGroupId", "UserPrincipalName", "DisplayName", "AddedDate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."MemberId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroupMembers' AND source_db = 'cwp2'),
-    m.new_id,
+    s."ADGroupId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ADGroups' AND source_db = 'cwp2'),
     s."UserPrincipalName",
     s."DisplayName",
     s."AddedDate",
     s."SiteName",
-    st."SiteId"
-FROM "src_cwp2"."ADGroupMembers" s JOIN _merge.adgroup_map m ON m.source_db = 'cwp2' AND m.old_id = s."ADGroupId"
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ADGroupMembers' AND c.source_db = 'cwp2' AND c.action = 'skipped' AND c.old_id = s."MemberId");
+    st."SiteId",
+    'cwp2'
+FROM "src_cwp2"."ADGroupMembers" s
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 -- ===== PermissionSets ========================================================
 \echo 'PermissionSets <- cwp_ecr'
 INSERT INTO public."PermissionSets" (
-    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_ecr'),
@@ -1790,13 +1908,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."PermissionSets" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionSets <- cwp_opspj3'
 INSERT INTO public."PermissionSets" (
-    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_opspj3'),
@@ -1810,13 +1929,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."PermissionSets" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionSets <- cwp_opspj'
 INSERT INTO public."PermissionSets" (
-    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_opspj'),
@@ -1830,13 +1950,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."PermissionSets" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionSets <- cwp_procon'
 INSERT INTO public."PermissionSets" (
-    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_procon'),
@@ -1850,13 +1971,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_procon'
 FROM "src_cwp_procon"."PermissionSets" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionSets <- cwp_opspj2'
 INSERT INTO public."PermissionSets" (
-    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_opspj2'),
@@ -1870,13 +1992,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."PermissionSets" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionSets <- cwp_opspj4'
 INSERT INTO public."PermissionSets" (
-    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_opspj4'),
@@ -1890,13 +2013,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."PermissionSets" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionSets <- cwp_xrl'
 INSERT INTO public."PermissionSets" (
-    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_xrl'),
@@ -1910,13 +2034,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."PermissionSets" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionSets <- cwp'
 INSERT INTO public."PermissionSets" (
-    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp'),
@@ -1930,13 +2055,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp'
 FROM "src_cwp"."PermissionSets" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionSets <- cwp2'
 INSERT INTO public."PermissionSets" (
-    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "PermissionSetId", "SetId", "PermissionKey", "Description", "FolderCount", "FileCount", "TotalSize", "SampleFolders", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp2'),
@@ -1950,114 +2076,124 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp2'
 FROM "src_cwp2"."PermissionSets" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 -- ===== PermissionSetEntries ==================================================
 \echo 'PermissionSetEntries <- cwp_ecr'
 INSERT INTO public."PermissionSetEntries" (
-    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel"
+    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel", "source_db"
 )
 SELECT
     s."PermissionSetEntryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSetEntries' AND source_db = 'cwp_ecr'),
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_ecr'),
     s."GroupName",
-    s."AccessLevel"
+    s."AccessLevel",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."PermissionSetEntries" s;
 
 \echo 'PermissionSetEntries <- cwp_opspj3'
 INSERT INTO public."PermissionSetEntries" (
-    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel"
+    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel", "source_db"
 )
 SELECT
     s."PermissionSetEntryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSetEntries' AND source_db = 'cwp_opspj3'),
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_opspj3'),
     s."GroupName",
-    s."AccessLevel"
+    s."AccessLevel",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."PermissionSetEntries" s;
 
 \echo 'PermissionSetEntries <- cwp_opspj'
 INSERT INTO public."PermissionSetEntries" (
-    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel"
+    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel", "source_db"
 )
 SELECT
     s."PermissionSetEntryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSetEntries' AND source_db = 'cwp_opspj'),
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_opspj'),
     s."GroupName",
-    s."AccessLevel"
+    s."AccessLevel",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."PermissionSetEntries" s;
 
 \echo 'PermissionSetEntries <- cwp_procon'
 INSERT INTO public."PermissionSetEntries" (
-    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel"
+    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel", "source_db"
 )
 SELECT
     s."PermissionSetEntryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSetEntries' AND source_db = 'cwp_procon'),
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_procon'),
     s."GroupName",
-    s."AccessLevel"
+    s."AccessLevel",
+    'cwp_procon'
 FROM "src_cwp_procon"."PermissionSetEntries" s;
 
 \echo 'PermissionSetEntries <- cwp_opspj2'
 INSERT INTO public."PermissionSetEntries" (
-    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel"
+    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel", "source_db"
 )
 SELECT
     s."PermissionSetEntryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSetEntries' AND source_db = 'cwp_opspj2'),
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_opspj2'),
     s."GroupName",
-    s."AccessLevel"
+    s."AccessLevel",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."PermissionSetEntries" s;
 
 \echo 'PermissionSetEntries <- cwp_opspj4'
 INSERT INTO public."PermissionSetEntries" (
-    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel"
+    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel", "source_db"
 )
 SELECT
     s."PermissionSetEntryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSetEntries' AND source_db = 'cwp_opspj4'),
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_opspj4'),
     s."GroupName",
-    s."AccessLevel"
+    s."AccessLevel",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."PermissionSetEntries" s;
 
 \echo 'PermissionSetEntries <- cwp_xrl'
 INSERT INTO public."PermissionSetEntries" (
-    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel"
+    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel", "source_db"
 )
 SELECT
     s."PermissionSetEntryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSetEntries' AND source_db = 'cwp_xrl'),
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp_xrl'),
     s."GroupName",
-    s."AccessLevel"
+    s."AccessLevel",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."PermissionSetEntries" s;
 
 \echo 'PermissionSetEntries <- cwp'
 INSERT INTO public."PermissionSetEntries" (
-    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel"
+    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel", "source_db"
 )
 SELECT
     s."PermissionSetEntryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSetEntries' AND source_db = 'cwp'),
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp'),
     s."GroupName",
-    s."AccessLevel"
+    s."AccessLevel",
+    'cwp'
 FROM "src_cwp"."PermissionSetEntries" s;
 
 \echo 'PermissionSetEntries <- cwp2'
 INSERT INTO public."PermissionSetEntries" (
-    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel"
+    "PermissionSetEntryId", "PermissionSetId", "GroupName", "AccessLevel", "source_db"
 )
 SELECT
     s."PermissionSetEntryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSetEntries' AND source_db = 'cwp2'),
     s."PermissionSetId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionSets' AND source_db = 'cwp2'),
     s."GroupName",
-    s."AccessLevel"
+    s."AccessLevel",
+    'cwp2'
 FROM "src_cwp2"."PermissionSetEntries" s;
 
 -- ===== FolderPermissions =====================================================
 \echo 'FolderPermissions <- cwp_ecr'
 INSERT INTO public."FolderPermissions" (
-    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."FolderPermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderPermissions' AND source_db = 'cwp_ecr'),
@@ -2071,13 +2207,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."FolderPermissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderPermissions <- cwp_opspj3'
 INSERT INTO public."FolderPermissions" (
-    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."FolderPermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderPermissions' AND source_db = 'cwp_opspj3'),
@@ -2091,13 +2228,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."FolderPermissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderPermissions <- cwp_opspj'
 INSERT INTO public."FolderPermissions" (
-    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."FolderPermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderPermissions' AND source_db = 'cwp_opspj'),
@@ -2111,13 +2249,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."FolderPermissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderPermissions <- cwp_procon'
 INSERT INTO public."FolderPermissions" (
-    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."FolderPermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderPermissions' AND source_db = 'cwp_procon'),
@@ -2131,13 +2270,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_procon'
 FROM "src_cwp_procon"."FolderPermissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderPermissions <- cwp_opspj2'
 INSERT INTO public."FolderPermissions" (
-    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."FolderPermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderPermissions' AND source_db = 'cwp_opspj2'),
@@ -2151,13 +2291,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."FolderPermissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderPermissions <- cwp_opspj4'
 INSERT INTO public."FolderPermissions" (
-    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."FolderPermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderPermissions' AND source_db = 'cwp_opspj4'),
@@ -2171,13 +2312,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."FolderPermissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderPermissions <- cwp_xrl'
 INSERT INTO public."FolderPermissions" (
-    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."FolderPermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderPermissions' AND source_db = 'cwp_xrl'),
@@ -2191,13 +2333,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."FolderPermissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderPermissions <- cwp'
 INSERT INTO public."FolderPermissions" (
-    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."FolderPermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderPermissions' AND source_db = 'cwp'),
@@ -2211,13 +2354,14 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp'
 FROM "src_cwp"."FolderPermissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderPermissions <- cwp2'
 INSERT INTO public."FolderPermissions" (
-    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId"
+    "FolderPermissionId", "FolderPath", "Depth", "PermissionSetId", "HasUniquePermissions", "DirectFileCount", "TotalFileCount", "ParentFolder", "ScanDate", "SiteUrl", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."FolderPermissionId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderPermissions' AND source_db = 'cwp2'),
@@ -2231,14 +2375,15 @@ SELECT
     s."ScanDate",
     s."SiteUrl",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp2'
 FROM "src_cwp2"."FolderPermissions" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 -- ===== PermissionMatrixSummaries =============================================
 \echo 'PermissionMatrixSummaries <- cwp_ecr'
 INSERT INTO public."PermissionMatrixSummaries" (
-    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId"
+    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionMatrixSummaryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionMatrixSummaries' AND source_db = 'cwp_ecr'),
@@ -2251,13 +2396,14 @@ SELECT
     s."TotalFoldersAnalyzed",
     s."InheritanceRate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."PermissionMatrixSummaries" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionMatrixSummaries <- cwp_opspj3'
 INSERT INTO public."PermissionMatrixSummaries" (
-    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId"
+    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionMatrixSummaryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionMatrixSummaries' AND source_db = 'cwp_opspj3'),
@@ -2270,13 +2416,14 @@ SELECT
     s."TotalFoldersAnalyzed",
     s."InheritanceRate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."PermissionMatrixSummaries" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionMatrixSummaries <- cwp_opspj'
 INSERT INTO public."PermissionMatrixSummaries" (
-    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId"
+    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionMatrixSummaryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionMatrixSummaries' AND source_db = 'cwp_opspj'),
@@ -2289,13 +2436,14 @@ SELECT
     s."TotalFoldersAnalyzed",
     s."InheritanceRate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."PermissionMatrixSummaries" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionMatrixSummaries <- cwp_procon'
 INSERT INTO public."PermissionMatrixSummaries" (
-    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId"
+    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionMatrixSummaryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionMatrixSummaries' AND source_db = 'cwp_procon'),
@@ -2308,13 +2456,14 @@ SELECT
     s."TotalFoldersAnalyzed",
     s."InheritanceRate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_procon'
 FROM "src_cwp_procon"."PermissionMatrixSummaries" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionMatrixSummaries <- cwp_opspj2'
 INSERT INTO public."PermissionMatrixSummaries" (
-    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId"
+    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionMatrixSummaryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionMatrixSummaries' AND source_db = 'cwp_opspj2'),
@@ -2327,13 +2476,14 @@ SELECT
     s."TotalFoldersAnalyzed",
     s."InheritanceRate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."PermissionMatrixSummaries" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionMatrixSummaries <- cwp_opspj4'
 INSERT INTO public."PermissionMatrixSummaries" (
-    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId"
+    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionMatrixSummaryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionMatrixSummaries' AND source_db = 'cwp_opspj4'),
@@ -2346,13 +2496,14 @@ SELECT
     s."TotalFoldersAnalyzed",
     s."InheritanceRate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."PermissionMatrixSummaries" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionMatrixSummaries <- cwp_xrl'
 INSERT INTO public."PermissionMatrixSummaries" (
-    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId"
+    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionMatrixSummaryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionMatrixSummaries' AND source_db = 'cwp_xrl'),
@@ -2365,13 +2516,14 @@ SELECT
     s."TotalFoldersAnalyzed",
     s."InheritanceRate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."PermissionMatrixSummaries" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionMatrixSummaries <- cwp'
 INSERT INTO public."PermissionMatrixSummaries" (
-    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId"
+    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionMatrixSummaryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionMatrixSummaries' AND source_db = 'cwp'),
@@ -2384,13 +2536,14 @@ SELECT
     s."TotalFoldersAnalyzed",
     s."InheritanceRate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp'
 FROM "src_cwp"."PermissionMatrixSummaries" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'PermissionMatrixSummaries <- cwp2'
 INSERT INTO public."PermissionMatrixSummaries" (
-    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId"
+    "PermissionMatrixSummaryId", "SiteUrl", "ScanDate", "UniquePermissionSets", "FilesWithUniquePermissions", "FilesWithInheritedPermissions", "FoldersWithUniquePermissions", "TotalFoldersAnalyzed", "InheritanceRate", "SiteName", "SiteId", "source_db"
 )
 SELECT
     s."PermissionMatrixSummaryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'PermissionMatrixSummaries' AND source_db = 'cwp2'),
@@ -2403,18 +2556,15 @@ SELECT
     s."TotalFoldersAnalyzed",
     s."InheritanceRate",
     s."SiteName",
-    st."SiteId"
+    st."SiteId",
+    'cwp2'
 FROM "src_cwp2"."PermissionMatrixSummaries" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 -- ===== ScanProgress ==========================================================
 \echo 'ScanProgress <- cwp_ecr'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ScanProgress', 'cwp_ecr', s."ScanProgressId", s."LibraryName" || ' | ' || s."SiteName", _merge.source_of('ScanProgress', t."ScanProgressId"), _merge.old_id_of('ScanProgress', t."ScanProgressId"), 'skipped',
-       '(LibraryName, SiteName) already loaded from a higher-priority source; FolderInheritanceBreaks of this library skipped too'
-FROM "src_cwp_ecr"."ScanProgress" s JOIN public."ScanProgress" t ON t."LibraryName" = s."LibraryName" AND t."SiteName" = s."SiteName";
 INSERT INTO public."ScanProgress" (
-    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId"
+    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId", "source_db"
 )
 SELECT
     s."ScanProgressId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ScanProgress' AND source_db = 'cwp_ecr'),
@@ -2429,18 +2579,14 @@ SELECT
     s."LastScanCompletedAt",
     s."ErrorMessage",
     s."PermissionsResolved",
-    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_ecr')
+    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_ecr'),
+    'cwp_ecr'
 FROM "src_cwp_ecr"."ScanProgress" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_ecr' AND c.action = 'skipped' AND c.old_id = s."ScanProgressId");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ScanProgress <- cwp_opspj3'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ScanProgress', 'cwp_opspj3', s."ScanProgressId", s."LibraryName" || ' | ' || s."SiteName", _merge.source_of('ScanProgress', t."ScanProgressId"), _merge.old_id_of('ScanProgress', t."ScanProgressId"), 'skipped',
-       '(LibraryName, SiteName) already loaded from a higher-priority source; FolderInheritanceBreaks of this library skipped too'
-FROM "src_cwp_opspj3"."ScanProgress" s JOIN public."ScanProgress" t ON t."LibraryName" = s."LibraryName" AND t."SiteName" = s."SiteName";
 INSERT INTO public."ScanProgress" (
-    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId"
+    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId", "source_db"
 )
 SELECT
     s."ScanProgressId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ScanProgress' AND source_db = 'cwp_opspj3'),
@@ -2455,18 +2601,14 @@ SELECT
     s."LastScanCompletedAt",
     s."ErrorMessage",
     s."PermissionsResolved",
-    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj3')
+    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj3'),
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."ScanProgress" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_opspj3' AND c.action = 'skipped' AND c.old_id = s."ScanProgressId");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ScanProgress <- cwp_opspj'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ScanProgress', 'cwp_opspj', s."ScanProgressId", s."LibraryName" || ' | ' || s."SiteName", _merge.source_of('ScanProgress', t."ScanProgressId"), _merge.old_id_of('ScanProgress', t."ScanProgressId"), 'skipped',
-       '(LibraryName, SiteName) already loaded from a higher-priority source; FolderInheritanceBreaks of this library skipped too'
-FROM "src_cwp_opspj"."ScanProgress" s JOIN public."ScanProgress" t ON t."LibraryName" = s."LibraryName" AND t."SiteName" = s."SiteName";
 INSERT INTO public."ScanProgress" (
-    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId"
+    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId", "source_db"
 )
 SELECT
     s."ScanProgressId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ScanProgress' AND source_db = 'cwp_opspj'),
@@ -2481,18 +2623,14 @@ SELECT
     s."LastScanCompletedAt",
     s."ErrorMessage",
     s."PermissionsResolved",
-    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj')
+    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj'),
+    'cwp_opspj'
 FROM "src_cwp_opspj"."ScanProgress" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_opspj' AND c.action = 'skipped' AND c.old_id = s."ScanProgressId");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ScanProgress <- cwp_procon'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ScanProgress', 'cwp_procon', s."ScanProgressId", s."LibraryName" || ' | ' || s."SiteName", _merge.source_of('ScanProgress', t."ScanProgressId"), _merge.old_id_of('ScanProgress', t."ScanProgressId"), 'skipped',
-       '(LibraryName, SiteName) already loaded from a higher-priority source; FolderInheritanceBreaks of this library skipped too'
-FROM "src_cwp_procon"."ScanProgress" s JOIN public."ScanProgress" t ON t."LibraryName" = s."LibraryName" AND t."SiteName" = s."SiteName";
 INSERT INTO public."ScanProgress" (
-    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId"
+    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId", "source_db"
 )
 SELECT
     s."ScanProgressId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ScanProgress' AND source_db = 'cwp_procon'),
@@ -2507,18 +2645,14 @@ SELECT
     s."LastScanCompletedAt",
     s."ErrorMessage",
     s."PermissionsResolved",
-    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_procon')
+    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_procon'),
+    'cwp_procon'
 FROM "src_cwp_procon"."ScanProgress" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_procon' AND c.action = 'skipped' AND c.old_id = s."ScanProgressId");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ScanProgress <- cwp_opspj2'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ScanProgress', 'cwp_opspj2', s."ScanProgressId", s."LibraryName" || ' | ' || s."SiteName", _merge.source_of('ScanProgress', t."ScanProgressId"), _merge.old_id_of('ScanProgress', t."ScanProgressId"), 'skipped',
-       '(LibraryName, SiteName) already loaded from a higher-priority source; FolderInheritanceBreaks of this library skipped too'
-FROM "src_cwp_opspj2"."ScanProgress" s JOIN public."ScanProgress" t ON t."LibraryName" = s."LibraryName" AND t."SiteName" = s."SiteName";
 INSERT INTO public."ScanProgress" (
-    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId"
+    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId", "source_db"
 )
 SELECT
     s."ScanProgressId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ScanProgress' AND source_db = 'cwp_opspj2'),
@@ -2533,18 +2667,14 @@ SELECT
     s."LastScanCompletedAt",
     s."ErrorMessage",
     s."PermissionsResolved",
-    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj2')
+    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj2'),
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."ScanProgress" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_opspj2' AND c.action = 'skipped' AND c.old_id = s."ScanProgressId");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ScanProgress <- cwp_opspj4'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ScanProgress', 'cwp_opspj4', s."ScanProgressId", s."LibraryName" || ' | ' || s."SiteName", _merge.source_of('ScanProgress', t."ScanProgressId"), _merge.old_id_of('ScanProgress', t."ScanProgressId"), 'skipped',
-       '(LibraryName, SiteName) already loaded from a higher-priority source; FolderInheritanceBreaks of this library skipped too'
-FROM "src_cwp_opspj4"."ScanProgress" s JOIN public."ScanProgress" t ON t."LibraryName" = s."LibraryName" AND t."SiteName" = s."SiteName";
 INSERT INTO public."ScanProgress" (
-    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId"
+    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId", "source_db"
 )
 SELECT
     s."ScanProgressId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ScanProgress' AND source_db = 'cwp_opspj4'),
@@ -2559,18 +2689,14 @@ SELECT
     s."LastScanCompletedAt",
     s."ErrorMessage",
     s."PermissionsResolved",
-    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj4')
+    s."LastResolvedFileId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Files' AND source_db = 'cwp_opspj4'),
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."ScanProgress" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_opspj4' AND c.action = 'skipped' AND c.old_id = s."ScanProgressId");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ScanProgress <- cwp_xrl'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ScanProgress', 'cwp_xrl', s."ScanProgressId", s."LibraryName" || ' | ' || s."SiteName", _merge.source_of('ScanProgress', t."ScanProgressId"), _merge.old_id_of('ScanProgress', t."ScanProgressId"), 'skipped',
-       '(LibraryName, SiteName) already loaded from a higher-priority source; FolderInheritanceBreaks of this library skipped too'
-FROM "src_cwp_xrl"."ScanProgress" s JOIN public."ScanProgress" t ON t."LibraryName" = s."LibraryName" AND t."SiteName" = s."SiteName";
 INSERT INTO public."ScanProgress" (
-    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId"
+    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId", "source_db"
 )
 SELECT
     s."ScanProgressId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ScanProgress' AND source_db = 'cwp_xrl'),
@@ -2585,18 +2711,14 @@ SELECT
     s."LastScanCompletedAt",
     s."ErrorMessage",
     true,
-    NULL
+    NULL,
+    'cwp_xrl'
 FROM "src_cwp_xrl"."ScanProgress" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_xrl' AND c.action = 'skipped' AND c.old_id = s."ScanProgressId");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ScanProgress <- cwp'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ScanProgress', 'cwp', s."ScanProgressId", s."LibraryName" || ' | ' || s."SiteName", _merge.source_of('ScanProgress', t."ScanProgressId"), _merge.old_id_of('ScanProgress', t."ScanProgressId"), 'skipped',
-       '(LibraryName, SiteName) already loaded from a higher-priority source; FolderInheritanceBreaks of this library skipped too'
-FROM "src_cwp"."ScanProgress" s JOIN public."ScanProgress" t ON t."LibraryName" = s."LibraryName" AND t."SiteName" = s."SiteName";
 INSERT INTO public."ScanProgress" (
-    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId"
+    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId", "source_db"
 )
 SELECT
     s."ScanProgressId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ScanProgress' AND source_db = 'cwp'),
@@ -2611,18 +2733,14 @@ SELECT
     s."LastScanCompletedAt",
     s."ErrorMessage",
     true,
-    NULL
+    NULL,
+    'cwp'
 FROM "src_cwp"."ScanProgress" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp' AND c.action = 'skipped' AND c.old_id = s."ScanProgressId");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'ScanProgress <- cwp2'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'ScanProgress', 'cwp2', s."ScanProgressId", s."LibraryName" || ' | ' || s."SiteName", _merge.source_of('ScanProgress', t."ScanProgressId"), _merge.old_id_of('ScanProgress', t."ScanProgressId"), 'skipped',
-       '(LibraryName, SiteName) already loaded from a higher-priority source; FolderInheritanceBreaks of this library skipped too'
-FROM "src_cwp2"."ScanProgress" s JOIN public."ScanProgress" t ON t."LibraryName" = s."LibraryName" AND t."SiteName" = s."SiteName";
 INSERT INTO public."ScanProgress" (
-    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId"
+    "ScanProgressId", "LibraryName", "SiteName", "SiteId", "Status", "LastPosition", "ItemsProcessed", "TotalItems", "LastUpdatedAt", "LastScanCompletedAt", "ErrorMessage", "PermissionsResolved", "LastResolvedFileId", "source_db"
 )
 SELECT
     s."ScanProgressId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'ScanProgress' AND source_db = 'cwp2'),
@@ -2637,15 +2755,15 @@ SELECT
     s."LastScanCompletedAt",
     s."ErrorMessage",
     true,
-    NULL
+    NULL,
+    'cwp2'
 FROM "src_cwp2"."ScanProgress" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp2' AND c.action = 'skipped' AND c.old_id = s."ScanProgressId");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 -- ===== FolderInheritanceBreaks ===============================================
 \echo 'FolderInheritanceBreaks <- cwp_ecr'
 INSERT INTO public."FolderInheritanceBreaks" (
-    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate"
+    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate", "source_db"
 )
 SELECT
     s."FolderInheritanceBreakId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderInheritanceBreaks' AND source_db = 'cwp_ecr'),
@@ -2657,14 +2775,14 @@ SELECT
     s."PrincipalType",
     s."RoleDefinition",
     s."LoginName",
-    s."ScanDate"
+    s."ScanDate",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."FolderInheritanceBreaks" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_ecr' AND c.action = 'skipped' AND c.natural_key = s."LibraryName" || ' | ' || s."SiteName");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderInheritanceBreaks <- cwp_opspj3'
 INSERT INTO public."FolderInheritanceBreaks" (
-    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate"
+    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate", "source_db"
 )
 SELECT
     s."FolderInheritanceBreakId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderInheritanceBreaks' AND source_db = 'cwp_opspj3'),
@@ -2676,14 +2794,14 @@ SELECT
     s."PrincipalType",
     s."RoleDefinition",
     s."LoginName",
-    s."ScanDate"
+    s."ScanDate",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."FolderInheritanceBreaks" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_opspj3' AND c.action = 'skipped' AND c.natural_key = s."LibraryName" || ' | ' || s."SiteName");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderInheritanceBreaks <- cwp_opspj'
 INSERT INTO public."FolderInheritanceBreaks" (
-    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate"
+    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate", "source_db"
 )
 SELECT
     s."FolderInheritanceBreakId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderInheritanceBreaks' AND source_db = 'cwp_opspj'),
@@ -2695,14 +2813,14 @@ SELECT
     s."PrincipalType",
     s."RoleDefinition",
     s."LoginName",
-    s."ScanDate"
+    s."ScanDate",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."FolderInheritanceBreaks" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_opspj' AND c.action = 'skipped' AND c.natural_key = s."LibraryName" || ' | ' || s."SiteName");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderInheritanceBreaks <- cwp_procon'
 INSERT INTO public."FolderInheritanceBreaks" (
-    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate"
+    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate", "source_db"
 )
 SELECT
     s."FolderInheritanceBreakId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderInheritanceBreaks' AND source_db = 'cwp_procon'),
@@ -2714,14 +2832,14 @@ SELECT
     s."PrincipalType",
     s."RoleDefinition",
     s."LoginName",
-    s."ScanDate"
+    s."ScanDate",
+    'cwp_procon'
 FROM "src_cwp_procon"."FolderInheritanceBreaks" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_procon' AND c.action = 'skipped' AND c.natural_key = s."LibraryName" || ' | ' || s."SiteName");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderInheritanceBreaks <- cwp_opspj2'
 INSERT INTO public."FolderInheritanceBreaks" (
-    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate"
+    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate", "source_db"
 )
 SELECT
     s."FolderInheritanceBreakId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderInheritanceBreaks' AND source_db = 'cwp_opspj2'),
@@ -2733,14 +2851,14 @@ SELECT
     s."PrincipalType",
     s."RoleDefinition",
     s."LoginName",
-    s."ScanDate"
+    s."ScanDate",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."FolderInheritanceBreaks" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_opspj2' AND c.action = 'skipped' AND c.natural_key = s."LibraryName" || ' | ' || s."SiteName");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderInheritanceBreaks <- cwp_opspj4'
 INSERT INTO public."FolderInheritanceBreaks" (
-    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate"
+    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate", "source_db"
 )
 SELECT
     s."FolderInheritanceBreakId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderInheritanceBreaks' AND source_db = 'cwp_opspj4'),
@@ -2752,14 +2870,14 @@ SELECT
     s."PrincipalType",
     s."RoleDefinition",
     s."LoginName",
-    s."ScanDate"
+    s."ScanDate",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."FolderInheritanceBreaks" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_opspj4' AND c.action = 'skipped' AND c.natural_key = s."LibraryName" || ' | ' || s."SiteName");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'FolderInheritanceBreaks <- cwp_xrl'
 INSERT INTO public."FolderInheritanceBreaks" (
-    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate"
+    "FolderInheritanceBreakId", "LibraryName", "SiteName", "SiteId", "FolderPath", "PrincipalName", "PrincipalType", "RoleDefinition", "LoginName", "ScanDate", "source_db"
 )
 SELECT
     s."FolderInheritanceBreakId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'FolderInheritanceBreaks' AND source_db = 'cwp_xrl'),
@@ -2771,106 +2889,106 @@ SELECT
     s."PrincipalType",
     s."RoleDefinition",
     s."LoginName",
-    s."ScanDate"
+    s."ScanDate",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."FolderInheritanceBreaks" s
-  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName"
-WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'ScanProgress' AND c.source_db = 'cwp_xrl' AND c.action = 'skipped' AND c.natural_key = s."LibraryName" || ' | ' || s."SiteName");
+  LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 -- ===== ActiveLanIds ==========================================================
 \echo 'ActiveLanIds <- cwp_ecr'
 INSERT INTO public."ActiveLanIds" (
-    "LanId", "UploadedAt"
+    "LanId", "UploadedAt", "source_db"
 )
 SELECT
     s."LanId",
-    s."UploadedAt"
-FROM "src_cwp_ecr"."ActiveLanIds" s
-ON CONFLICT ("LanId") DO UPDATE SET "UploadedAt" = GREATEST(public."ActiveLanIds"."UploadedAt", EXCLUDED."UploadedAt");
+    s."UploadedAt",
+    'cwp_ecr'
+FROM "src_cwp_ecr"."ActiveLanIds" s;
 
 \echo 'ActiveLanIds <- cwp_opspj3'
 INSERT INTO public."ActiveLanIds" (
-    "LanId", "UploadedAt"
+    "LanId", "UploadedAt", "source_db"
 )
 SELECT
     s."LanId",
-    s."UploadedAt"
-FROM "src_cwp_opspj3"."ActiveLanIds" s
-ON CONFLICT ("LanId") DO UPDATE SET "UploadedAt" = GREATEST(public."ActiveLanIds"."UploadedAt", EXCLUDED."UploadedAt");
+    s."UploadedAt",
+    'cwp_opspj3'
+FROM "src_cwp_opspj3"."ActiveLanIds" s;
 
 \echo 'ActiveLanIds <- cwp_opspj'
 INSERT INTO public."ActiveLanIds" (
-    "LanId", "UploadedAt"
+    "LanId", "UploadedAt", "source_db"
 )
 SELECT
     s."LanId",
-    s."UploadedAt"
-FROM "src_cwp_opspj"."ActiveLanIds" s
-ON CONFLICT ("LanId") DO UPDATE SET "UploadedAt" = GREATEST(public."ActiveLanIds"."UploadedAt", EXCLUDED."UploadedAt");
+    s."UploadedAt",
+    'cwp_opspj'
+FROM "src_cwp_opspj"."ActiveLanIds" s;
 
 \echo 'ActiveLanIds <- cwp_procon'
 INSERT INTO public."ActiveLanIds" (
-    "LanId", "UploadedAt"
+    "LanId", "UploadedAt", "source_db"
 )
 SELECT
     s."LanId",
-    s."UploadedAt"
-FROM "src_cwp_procon"."ActiveLanIds" s
-ON CONFLICT ("LanId") DO UPDATE SET "UploadedAt" = GREATEST(public."ActiveLanIds"."UploadedAt", EXCLUDED."UploadedAt");
+    s."UploadedAt",
+    'cwp_procon'
+FROM "src_cwp_procon"."ActiveLanIds" s;
 
 \echo 'ActiveLanIds <- cwp_opspj2'
 INSERT INTO public."ActiveLanIds" (
-    "LanId", "UploadedAt"
+    "LanId", "UploadedAt", "source_db"
 )
 SELECT
     s."LanId",
-    s."UploadedAt"
-FROM "src_cwp_opspj2"."ActiveLanIds" s
-ON CONFLICT ("LanId") DO UPDATE SET "UploadedAt" = GREATEST(public."ActiveLanIds"."UploadedAt", EXCLUDED."UploadedAt");
+    s."UploadedAt",
+    'cwp_opspj2'
+FROM "src_cwp_opspj2"."ActiveLanIds" s;
 
 \echo 'ActiveLanIds <- cwp_opspj4'
 INSERT INTO public."ActiveLanIds" (
-    "LanId", "UploadedAt"
+    "LanId", "UploadedAt", "source_db"
 )
 SELECT
     s."LanId",
-    s."UploadedAt"
-FROM "src_cwp_opspj4"."ActiveLanIds" s
-ON CONFLICT ("LanId") DO UPDATE SET "UploadedAt" = GREATEST(public."ActiveLanIds"."UploadedAt", EXCLUDED."UploadedAt");
+    s."UploadedAt",
+    'cwp_opspj4'
+FROM "src_cwp_opspj4"."ActiveLanIds" s;
 
 \echo 'ActiveLanIds <- cwp_xrl'
 INSERT INTO public."ActiveLanIds" (
-    "LanId", "UploadedAt"
+    "LanId", "UploadedAt", "source_db"
 )
 SELECT
     s."LanId",
-    s."UploadedAt"
-FROM "src_cwp_xrl"."ActiveLanIds" s
-ON CONFLICT ("LanId") DO UPDATE SET "UploadedAt" = GREATEST(public."ActiveLanIds"."UploadedAt", EXCLUDED."UploadedAt");
+    s."UploadedAt",
+    'cwp_xrl'
+FROM "src_cwp_xrl"."ActiveLanIds" s;
 
 \echo 'ActiveLanIds <- cwp'
 INSERT INTO public."ActiveLanIds" (
-    "LanId", "UploadedAt"
+    "LanId", "UploadedAt", "source_db"
 )
 SELECT
     s."LanId",
-    s."UploadedAt"
-FROM "src_cwp"."ActiveLanIds" s
-ON CONFLICT ("LanId") DO UPDATE SET "UploadedAt" = GREATEST(public."ActiveLanIds"."UploadedAt", EXCLUDED."UploadedAt");
+    s."UploadedAt",
+    'cwp'
+FROM "src_cwp"."ActiveLanIds" s;
 
 \echo 'ActiveLanIds <- cwp2'
 INSERT INTO public."ActiveLanIds" (
-    "LanId", "UploadedAt"
+    "LanId", "UploadedAt", "source_db"
 )
 SELECT
     s."LanId",
-    s."UploadedAt"
-FROM "src_cwp2"."ActiveLanIds" s
-ON CONFLICT ("LanId") DO UPDATE SET "UploadedAt" = GREATEST(public."ActiveLanIds"."UploadedAt", EXCLUDED."UploadedAt");
+    s."UploadedAt",
+    'cwp2'
+FROM "src_cwp2"."ActiveLanIds" s;
 
 -- ===== Migration_Operation_Logs ==============================================
 \echo 'Migration_Operation_Logs <- cwp_ecr'
 INSERT INTO public."Migration_Operation_Logs" (
-    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status"
+    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status", "source_db"
 )
 SELECT
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_ecr'),
@@ -2878,12 +2996,13 @@ SELECT
     s."ExecutionTime",
     s."SiteFilter",
     s."AffectedRows",
-    s."Status"
+    s."Status",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."Migration_Operation_Logs" s;
 
 \echo 'Migration_Operation_Logs <- cwp_opspj3'
 INSERT INTO public."Migration_Operation_Logs" (
-    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status"
+    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status", "source_db"
 )
 SELECT
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_opspj3'),
@@ -2891,12 +3010,13 @@ SELECT
     s."ExecutionTime",
     s."SiteFilter",
     s."AffectedRows",
-    s."Status"
+    s."Status",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."Migration_Operation_Logs" s;
 
 \echo 'Migration_Operation_Logs <- cwp_opspj'
 INSERT INTO public."Migration_Operation_Logs" (
-    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status"
+    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status", "source_db"
 )
 SELECT
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_opspj'),
@@ -2904,12 +3024,13 @@ SELECT
     s."ExecutionTime",
     s."SiteFilter",
     s."AffectedRows",
-    s."Status"
+    s."Status",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."Migration_Operation_Logs" s;
 
 \echo 'Migration_Operation_Logs <- cwp_procon'
 INSERT INTO public."Migration_Operation_Logs" (
-    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status"
+    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status", "source_db"
 )
 SELECT
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_procon'),
@@ -2917,12 +3038,13 @@ SELECT
     s."ExecutionTime",
     s."SiteFilter",
     s."AffectedRows",
-    s."Status"
+    s."Status",
+    'cwp_procon'
 FROM "src_cwp_procon"."Migration_Operation_Logs" s;
 
 \echo 'Migration_Operation_Logs <- cwp_opspj2'
 INSERT INTO public."Migration_Operation_Logs" (
-    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status"
+    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status", "source_db"
 )
 SELECT
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_opspj2'),
@@ -2930,12 +3052,13 @@ SELECT
     s."ExecutionTime",
     s."SiteFilter",
     s."AffectedRows",
-    s."Status"
+    s."Status",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."Migration_Operation_Logs" s;
 
 \echo 'Migration_Operation_Logs <- cwp_opspj4'
 INSERT INTO public."Migration_Operation_Logs" (
-    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status"
+    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status", "source_db"
 )
 SELECT
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_opspj4'),
@@ -2943,12 +3066,13 @@ SELECT
     s."ExecutionTime",
     s."SiteFilter",
     s."AffectedRows",
-    s."Status"
+    s."Status",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."Migration_Operation_Logs" s;
 
 \echo 'Migration_Operation_Logs <- cwp_xrl'
 INSERT INTO public."Migration_Operation_Logs" (
-    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status"
+    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status", "source_db"
 )
 SELECT
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_xrl'),
@@ -2956,12 +3080,13 @@ SELECT
     s."ExecutionTime",
     s."SiteFilter",
     s."AffectedRows",
-    s."Status"
+    s."Status",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."Migration_Operation_Logs" s;
 
 \echo 'Migration_Operation_Logs <- cwp'
 INSERT INTO public."Migration_Operation_Logs" (
-    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status"
+    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status", "source_db"
 )
 SELECT
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp'),
@@ -2969,12 +3094,13 @@ SELECT
     s."ExecutionTime",
     s."SiteFilter",
     s."AffectedRows",
-    s."Status"
+    s."Status",
+    'cwp'
 FROM "src_cwp"."Migration_Operation_Logs" s;
 
 \echo 'Migration_Operation_Logs <- cwp2'
 INSERT INTO public."Migration_Operation_Logs" (
-    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status"
+    "OpId", "StepName", "ExecutionTime", "SiteFilter", "AffectedRows", "Status", "source_db"
 )
 SELECT
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp2'),
@@ -2982,122 +3108,132 @@ SELECT
     s."ExecutionTime",
     s."SiteFilter",
     s."AffectedRows",
-    s."Status"
+    s."Status",
+    'cwp2'
 FROM "src_cwp2"."Migration_Operation_Logs" s;
 
 -- ===== Migration_Path_History ================================================
 \echo 'Migration_Path_History <- cwp_ecr'
 INSERT INTO public."Migration_Path_History" (
-    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath"
+    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath", "source_db"
 )
 SELECT
     s."HistoryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Path_History' AND source_db = 'cwp_ecr'),
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_ecr'),
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_ecr'),
     s."OldPath",
-    s."NewPath"
+    s."NewPath",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."Migration_Path_History" s;
 
 \echo 'Migration_Path_History <- cwp_opspj3'
 INSERT INTO public."Migration_Path_History" (
-    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath"
+    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath", "source_db"
 )
 SELECT
     s."HistoryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Path_History' AND source_db = 'cwp_opspj3'),
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_opspj3'),
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj3'),
     s."OldPath",
-    s."NewPath"
+    s."NewPath",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."Migration_Path_History" s;
 
 \echo 'Migration_Path_History <- cwp_opspj'
 INSERT INTO public."Migration_Path_History" (
-    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath"
+    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath", "source_db"
 )
 SELECT
     s."HistoryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Path_History' AND source_db = 'cwp_opspj'),
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_opspj'),
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj'),
     s."OldPath",
-    s."NewPath"
+    s."NewPath",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."Migration_Path_History" s;
 
 \echo 'Migration_Path_History <- cwp_procon'
 INSERT INTO public."Migration_Path_History" (
-    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath"
+    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath", "source_db"
 )
 SELECT
     s."HistoryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Path_History' AND source_db = 'cwp_procon'),
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_procon'),
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_procon'),
     s."OldPath",
-    s."NewPath"
+    s."NewPath",
+    'cwp_procon'
 FROM "src_cwp_procon"."Migration_Path_History" s;
 
 \echo 'Migration_Path_History <- cwp_opspj2'
 INSERT INTO public."Migration_Path_History" (
-    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath"
+    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath", "source_db"
 )
 SELECT
     s."HistoryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Path_History' AND source_db = 'cwp_opspj2'),
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_opspj2'),
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj2'),
     s."OldPath",
-    s."NewPath"
+    s."NewPath",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."Migration_Path_History" s;
 
 \echo 'Migration_Path_History <- cwp_opspj4'
 INSERT INTO public."Migration_Path_History" (
-    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath"
+    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath", "source_db"
 )
 SELECT
     s."HistoryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Path_History' AND source_db = 'cwp_opspj4'),
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_opspj4'),
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj4'),
     s."OldPath",
-    s."NewPath"
+    s."NewPath",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."Migration_Path_History" s;
 
 \echo 'Migration_Path_History <- cwp_xrl'
 INSERT INTO public."Migration_Path_History" (
-    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath"
+    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath", "source_db"
 )
 SELECT
     s."HistoryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Path_History' AND source_db = 'cwp_xrl'),
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp_xrl'),
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_xrl'),
     s."OldPath",
-    s."NewPath"
+    s."NewPath",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."Migration_Path_History" s;
 
 \echo 'Migration_Path_History <- cwp'
 INSERT INTO public."Migration_Path_History" (
-    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath"
+    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath", "source_db"
 )
 SELECT
     s."HistoryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Path_History' AND source_db = 'cwp'),
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp'),
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp'),
     s."OldPath",
-    s."NewPath"
+    s."NewPath",
+    'cwp'
 FROM "src_cwp"."Migration_Path_History" s;
 
 \echo 'Migration_Path_History <- cwp2'
 INSERT INTO public."Migration_Path_History" (
-    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath"
+    "HistoryId", "OpId", "TaskId", "OldPath", "NewPath", "source_db"
 )
 SELECT
     s."HistoryId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Path_History' AND source_db = 'cwp2'),
     s."OpId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'Migration_Operation_Logs' AND source_db = 'cwp2'),
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp2'),
     s."OldPath",
-    s."NewPath"
+    s."NewPath",
+    'cwp2'
 FROM "src_cwp2"."Migration_Path_History" s;
 
 -- ===== MigrationTasks_Parsed =================================================
 \echo 'MigrationTasks_Parsed <- cwp_ecr'
 INSERT INTO public."MigrationTasks_Parsed" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_ecr'),
@@ -3118,6 +3254,7 @@ SELECT
     s."SiteName",
     st."SiteId",
     s."IsDeltaSync",
+    'cwp_ecr',
     s."extracted_fn",
     s."final_lv",
     s."PathStatus",
@@ -3131,7 +3268,7 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 
 \echo 'MigrationTasks_Parsed <- cwp_opspj3'
 INSERT INTO public."MigrationTasks_Parsed" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj3'),
@@ -3152,6 +3289,7 @@ SELECT
     s."SiteName",
     st."SiteId",
     s."IsDeltaSync",
+    'cwp_opspj3',
     s."extracted_fn",
     s."final_lv",
     s."PathStatus",
@@ -3165,7 +3303,7 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 
 \echo 'MigrationTasks_Parsed <- cwp_opspj'
 INSERT INTO public."MigrationTasks_Parsed" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj'),
@@ -3186,6 +3324,7 @@ SELECT
     s."SiteName",
     st."SiteId",
     s."IsDeltaSync",
+    'cwp_opspj',
     s."extracted_fn",
     s."final_lv",
     s."PathStatus",
@@ -3199,7 +3338,7 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 
 \echo 'MigrationTasks_Parsed <- cwp_procon'
 INSERT INTO public."MigrationTasks_Parsed" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_procon'),
@@ -3220,6 +3359,7 @@ SELECT
     s."SiteName",
     st."SiteId",
     s."IsDeltaSync",
+    'cwp_procon',
     s."extracted_fn",
     s."final_lv",
     s."PathStatus",
@@ -3233,7 +3373,7 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 
 \echo 'MigrationTasks_Parsed <- cwp_opspj2'
 INSERT INTO public."MigrationTasks_Parsed" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj2'),
@@ -3254,6 +3394,7 @@ SELECT
     s."SiteName",
     st."SiteId",
     s."IsDeltaSync",
+    'cwp_opspj2',
     s."extracted_fn",
     s."final_lv",
     s."PathStatus",
@@ -3267,7 +3408,7 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 
 \echo 'MigrationTasks_Parsed <- cwp_opspj4'
 INSERT INTO public."MigrationTasks_Parsed" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj4'),
@@ -3288,6 +3429,7 @@ SELECT
     s."SiteName",
     st."SiteId",
     s."IsDeltaSync",
+    'cwp_opspj4',
     s."extracted_fn",
     s."final_lv",
     s."PathStatus",
@@ -3301,7 +3443,7 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 
 \echo 'MigrationTasks_Parsed <- cwp_xrl'
 INSERT INTO public."MigrationTasks_Parsed" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_xrl'),
@@ -3322,6 +3464,7 @@ SELECT
     s."SiteName",
     st."SiteId",
     s."IsDeltaSync",
+    'cwp_xrl',
     s."extracted_fn",
     s."final_lv",
     s."PathStatus",
@@ -3335,7 +3478,7 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 
 \echo 'MigrationTasks_Parsed <- cwp'
 INSERT INTO public."MigrationTasks_Parsed" (
-    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
+    "TaskId", "TaskType", "FileId", "ServerRelativeUrl", "TargetPath", "PermissionsJson", "Priority", "Status", "WorkerId", "CreatedAt", "ClaimedAt", "CompletedAt", "ErrorMessage", "RetryCount", "MaxRetries", "SiteName", "SiteId", "IsDeltaSync", "source_db", "extracted_fn", "final_lv", "PathStatus", "BreakfolderLv", "TargetPath_Len", "FileName_Len", "FinalFolderLv"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp'),
@@ -3356,6 +3499,7 @@ SELECT
     s."SiteName",
     st."SiteId",
     s."IsDeltaSync",
+    'cwp',
     s."extracted_fn",
     s."final_lv",
     s."PathStatus",
@@ -3370,7 +3514,7 @@ WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'Migr
 -- ===== NewChangePath_NEW =====================================================
 \echo 'NewChangePath_NEW <- cwp_ecr'
 INSERT INTO public."NewChangePath_NEW" (
-    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt"
+    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_ecr'),
@@ -3381,13 +3525,14 @@ SELECT
     s."RemainPath",
     s."NewPath",
     s."NewPath_Len",
-    s."CreatedAt"
+    s."CreatedAt",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."NewChangePath_NEW" s
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_ecr' AND c.action = 'skipped' AND c.old_id = s."TaskId");
 
 \echo 'NewChangePath_NEW <- cwp_opspj3'
 INSERT INTO public."NewChangePath_NEW" (
-    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt"
+    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj3'),
@@ -3398,13 +3543,14 @@ SELECT
     s."RemainPath",
     s."NewPath",
     s."NewPath_Len",
-    s."CreatedAt"
+    s."CreatedAt",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."NewChangePath_NEW" s
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_opspj3' AND c.action = 'skipped' AND c.old_id = s."TaskId");
 
 \echo 'NewChangePath_NEW <- cwp_opspj'
 INSERT INTO public."NewChangePath_NEW" (
-    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt"
+    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj'),
@@ -3415,13 +3561,14 @@ SELECT
     s."RemainPath",
     s."NewPath",
     s."NewPath_Len",
-    s."CreatedAt"
+    s."CreatedAt",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."NewChangePath_NEW" s
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_opspj' AND c.action = 'skipped' AND c.old_id = s."TaskId");
 
 \echo 'NewChangePath_NEW <- cwp_procon'
 INSERT INTO public."NewChangePath_NEW" (
-    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt"
+    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_procon'),
@@ -3432,13 +3579,14 @@ SELECT
     s."RemainPath",
     s."NewPath",
     s."NewPath_Len",
-    s."CreatedAt"
+    s."CreatedAt",
+    'cwp_procon'
 FROM "src_cwp_procon"."NewChangePath_NEW" s
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_procon' AND c.action = 'skipped' AND c.old_id = s."TaskId");
 
 \echo 'NewChangePath_NEW <- cwp_opspj2'
 INSERT INTO public."NewChangePath_NEW" (
-    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt"
+    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj2'),
@@ -3449,13 +3597,14 @@ SELECT
     s."RemainPath",
     s."NewPath",
     s."NewPath_Len",
-    s."CreatedAt"
+    s."CreatedAt",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."NewChangePath_NEW" s
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_opspj2' AND c.action = 'skipped' AND c.old_id = s."TaskId");
 
 \echo 'NewChangePath_NEW <- cwp_opspj4'
 INSERT INTO public."NewChangePath_NEW" (
-    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt"
+    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_opspj4'),
@@ -3466,13 +3615,14 @@ SELECT
     s."RemainPath",
     s."NewPath",
     s."NewPath_Len",
-    s."CreatedAt"
+    s."CreatedAt",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."NewChangePath_NEW" s
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_opspj4' AND c.action = 'skipped' AND c.old_id = s."TaskId");
 
 \echo 'NewChangePath_NEW <- cwp_xrl'
 INSERT INTO public."NewChangePath_NEW" (
-    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt"
+    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp_xrl'),
@@ -3483,13 +3633,14 @@ SELECT
     s."RemainPath",
     s."NewPath",
     s."NewPath_Len",
-    s."CreatedAt"
+    s."CreatedAt",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."NewChangePath_NEW" s
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp_xrl' AND c.action = 'skipped' AND c.old_id = s."TaskId");
 
 \echo 'NewChangePath_NEW <- cwp'
 INSERT INTO public."NewChangePath_NEW" (
-    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt"
+    "TaskId", "OriginalPath", "SelectedTarget", "ExtendFolder", "RootPath", "RemainPath", "NewPath", "NewPath_Len", "CreatedAt", "source_db"
 )
 SELECT
     s."TaskId" + (SELECT id_offset FROM _merge.id_offset WHERE table_name = 'MigrationTasks' AND source_db = 'cwp'),
@@ -3500,14 +3651,15 @@ SELECT
     s."RemainPath",
     s."NewPath",
     s."NewPath_Len",
-    s."CreatedAt"
+    s."CreatedAt",
+    'cwp'
 FROM "src_cwp"."NewChangePath_NEW" s
 WHERE NOT EXISTS (SELECT 1 FROM _merge.conflict_log c WHERE c.table_name = 'MigrationTasks' AND c.source_db = 'cwp' AND c.action = 'skipped' AND c.old_id = s."TaskId");
 
 -- ===== Folder_Structure_Final_Analysis =======================================
 \echo 'Folder_Structure_Final_Analysis <- cwp_ecr'
 INSERT INTO public."Folder_Structure_Final_Analysis" (
-    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations"
+    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations", "source_db"
 )
 SELECT
     s."SiteName",
@@ -3520,13 +3672,14 @@ SELECT
     s."direct_violations",
     s."acc_files",
     s."acc_subfolders",
-    s."acc_violations"
+    s."acc_violations",
+    'cwp_ecr'
 FROM "src_cwp_ecr"."Folder_Structure_Final_Analysis" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'Folder_Structure_Final_Analysis <- cwp_opspj3'
 INSERT INTO public."Folder_Structure_Final_Analysis" (
-    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations"
+    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations", "source_db"
 )
 SELECT
     s."SiteName",
@@ -3539,13 +3692,14 @@ SELECT
     s."direct_violations",
     s."acc_files",
     s."acc_subfolders",
-    s."acc_violations"
+    s."acc_violations",
+    'cwp_opspj3'
 FROM "src_cwp_opspj3"."Folder_Structure_Final_Analysis" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'Folder_Structure_Final_Analysis <- cwp_opspj'
 INSERT INTO public."Folder_Structure_Final_Analysis" (
-    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations"
+    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations", "source_db"
 )
 SELECT
     s."SiteName",
@@ -3558,13 +3712,14 @@ SELECT
     s."direct_violations",
     s."acc_files",
     s."acc_subfolders",
-    s."acc_violations"
+    s."acc_violations",
+    'cwp_opspj'
 FROM "src_cwp_opspj"."Folder_Structure_Final_Analysis" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'Folder_Structure_Final_Analysis <- cwp_procon'
 INSERT INTO public."Folder_Structure_Final_Analysis" (
-    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations"
+    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations", "source_db"
 )
 SELECT
     s."SiteName",
@@ -3577,13 +3732,14 @@ SELECT
     s."direct_violations",
     s."acc_files",
     s."acc_subfolders",
-    s."acc_violations"
+    s."acc_violations",
+    'cwp_procon'
 FROM "src_cwp_procon"."Folder_Structure_Final_Analysis" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'Folder_Structure_Final_Analysis <- cwp_opspj2'
 INSERT INTO public."Folder_Structure_Final_Analysis" (
-    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations"
+    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations", "source_db"
 )
 SELECT
     s."SiteName",
@@ -3596,13 +3752,14 @@ SELECT
     s."direct_violations",
     s."acc_files",
     s."acc_subfolders",
-    s."acc_violations"
+    s."acc_violations",
+    'cwp_opspj2'
 FROM "src_cwp_opspj2"."Folder_Structure_Final_Analysis" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'Folder_Structure_Final_Analysis <- cwp_opspj4'
 INSERT INTO public."Folder_Structure_Final_Analysis" (
-    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations"
+    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations", "source_db"
 )
 SELECT
     s."SiteName",
@@ -3615,13 +3772,14 @@ SELECT
     s."direct_violations",
     s."acc_files",
     s."acc_subfolders",
-    s."acc_violations"
+    s."acc_violations",
+    'cwp_opspj4'
 FROM "src_cwp_opspj4"."Folder_Structure_Final_Analysis" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'Folder_Structure_Final_Analysis <- cwp_xrl'
 INSERT INTO public."Folder_Structure_Final_Analysis" (
-    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations"
+    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations", "source_db"
 )
 SELECT
     s."SiteName",
@@ -3634,13 +3792,14 @@ SELECT
     s."direct_violations",
     s."acc_files",
     s."acc_subfolders",
-    s."acc_violations"
+    s."acc_violations",
+    'cwp_xrl'
 FROM "src_cwp_xrl"."Folder_Structure_Final_Analysis" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
 \echo 'Folder_Structure_Final_Analysis <- cwp'
 INSERT INTO public."Folder_Structure_Final_Analysis" (
-    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations"
+    "SiteName", "SiteId", "folder_path", "folder_level", "max_acc_path_len", "direct_files", "direct_subfolders", "direct_violations", "acc_files", "acc_subfolders", "acc_violations", "source_db"
 )
 SELECT
     s."SiteName",
@@ -3653,7 +3812,8 @@ SELECT
     s."direct_violations",
     s."acc_files",
     s."acc_subfolders",
-    s."acc_violations"
+    s."acc_violations",
+    'cwp'
 FROM "src_cwp"."Folder_Structure_Final_Analysis" s
   LEFT JOIN public."Sites" st ON st."SiteName" = s."SiteName";
 
@@ -4138,10 +4298,6 @@ FROM "src_cwp2"."PostgreSQL_SiteGroupPermission_20260503" s;
 
 -- ===== Folders ===============================================================
 \echo 'Folders <- cwp_opspj4'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'Folders', 'cwp_opspj4', NULL, s."UniqueId"::text, t.source_db, NULL, 'skipped',
-       'UniqueId already loaded from a higher-priority source'
-FROM "src_cwp_opspj4"."Folders" s JOIN public."Folders" t ON t."UniqueId" = s."UniqueId";
 INSERT INTO public."Folders" (
     "UniqueId", "path", "source_db"
 )
@@ -4149,8 +4305,7 @@ SELECT
     s."UniqueId",
     s."path",
     'cwp_opspj4'
-FROM "src_cwp_opspj4"."Folders" s
-ON CONFLICT ("UniqueId") DO NOTHING;
+FROM "src_cwp_opspj4"."Folders" s;
 
 -- ===== break_path_mapping ====================================================
 \echo 'break_path_mapping <- cwp_opspj2'
@@ -4315,10 +4470,6 @@ FROM "src_cwp_opspj4"."sg_permission_matrix" s;
 
 -- ===== sitemapping ===========================================================
 \echo 'sitemapping <- cwp_opspj2'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'sitemapping', 'cwp_opspj2', NULL, s."sp2013_url"::text, t.source_db, NULL, 'skipped',
-       'sp2013_url already loaded from a higher-priority source'
-FROM "src_cwp_opspj2"."sitemapping" s JOIN public."sitemapping" t ON t."sp2013_url" = s."sp2013_url";
 INSERT INTO public."sitemapping" (
     "sp2013_url", "sp2013_sitecollection", "nas_url", "site_prefix", "source_db"
 )
@@ -4328,14 +4479,9 @@ SELECT
     s."nas_url",
     s."site_prefix",
     'cwp_opspj2'
-FROM "src_cwp_opspj2"."sitemapping" s
-ON CONFLICT ("sp2013_url") DO NOTHING;
+FROM "src_cwp_opspj2"."sitemapping" s;
 
 \echo 'sitemapping <- cwp_opspj4'
-INSERT INTO _merge.conflict_log (table_name, source_db, old_id, natural_key, winner_source_db, winner_old_id, action, reason)
-SELECT 'sitemapping', 'cwp_opspj4', NULL, s."sp2013_url"::text, t.source_db, NULL, 'skipped',
-       'sp2013_url already loaded from a higher-priority source'
-FROM "src_cwp_opspj4"."sitemapping" s JOIN public."sitemapping" t ON t."sp2013_url" = s."sp2013_url";
 INSERT INTO public."sitemapping" (
     "sp2013_url", "sp2013_sitecollection", "nas_url", "site_prefix", "source_db"
 )
@@ -4345,7 +4491,6 @@ SELECT
     s."nas_url",
     s."site_prefix",
     'cwp_opspj4'
-FROM "src_cwp_opspj4"."sitemapping" s
-ON CONFLICT ("sp2013_url") DO NOTHING;
+FROM "src_cwp_opspj4"."sitemapping" s;
 
 COMMIT;

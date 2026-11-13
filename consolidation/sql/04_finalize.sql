@@ -121,6 +121,31 @@ CREATE INDEX idx_sg_item_path ON public.sg_permission_matrix USING hash (item_pa
 CREATE INDEX idx_sitemapping_source_db ON public.sitemapping USING btree (source_db);
 CREATE INDEX idx_sitemapping_site_prefix ON public.sitemapping USING btree (site_prefix);
 
+-- Natural keys that are UNIQUE in the app schema but hold cross-source
+-- duplicates after the merge: plain indexes for now, so the duplicates can be
+-- found fast. 07_restore_unique.sql swaps them for the unique keys.
+CREATE INDEX "IX_ADGroups_GroupName" ON public."ADGroups" USING btree ("GroupName");
+CREATE INDEX "IX_ADGroups_GroupGuid" ON public."ADGroups" USING btree ("GroupGuid");
+CREATE INDEX "IX_ScanProgress_Library_Site_dup" ON public."ScanProgress" USING btree ("LibraryName", "SiteName");
+CREATE INDEX "IX_ActiveLanIds_LanId" ON public."ActiveLanIds" USING btree ("LanId");
+
+-- source_db on every other table (core app tables, copied-as-is tables): which
+-- source DB a row came from. Used by 05_verify.sql and for per-source queries.
+DO $$
+DECLARE t text;
+BEGIN
+    FOR t IN
+        SELECT c.table_name FROM information_schema.columns c
+        WHERE c.table_schema = 'public' AND c.column_name = 'source_db'
+          AND c.table_name NOT LIKE 'src\_%\_\_%'  -- staging copies of the sources ("Through this PC")
+          AND NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
+                          WHERE i.indrelid = format('public.%I', c.table_name)::regclass AND a.attname = 'source_db')
+        ORDER BY 1
+    LOOP
+        EXECUTE format('CREATE INDEX %I ON public.%I USING btree (source_db)', 'IX_' || t || '_source_db', t);
+    END LOOP;
+END $$;
+
 -- -----------------------------------------------------------------------------
 -- Foreign keys (fail here = an orphan slipped through the merge)
 -- -----------------------------------------------------------------------------

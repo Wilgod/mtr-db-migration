@@ -31,4 +31,20 @@ SELECT setval('public."PostgreSQL_SiteGroupPermission_20260503_ID_seq"', COALESC
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres;
 
-ANALYZE;
+-- Statistics for the merged tables only. A bare "ANALYZE;" walks every table in
+-- the database, system catalogs included: a non-superuser login gets a
+-- "permission denied to analyze" warning for each one, and the extra writes to
+-- pg_statistic are wasted work. Staging copies (src_*) were analyzed when loaded.
+DO $$
+DECLARE r record;
+BEGIN
+    FOR r IN
+        SELECT c.oid::regclass AS t
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+          AND c.relname NOT LIKE 'src\_%'
+          AND pg_has_role(current_user, c.relowner, 'USAGE')
+    LOOP
+        EXECUTE 'ANALYZE ' || r.t;
+    END LOOP;
+END $$;

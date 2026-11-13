@@ -19,6 +19,11 @@ Upload (CSV or XLSX) - Import-MhFile:
     in the file are deleted, so a key is not kept in both tables.
     One transaction per upload: it either fully applies or not at all.
 
+    With config HorizontalMetadata.LinkToFiles = false, "Files" and "Metadata" are not
+    used at all: rows are upserted by UniqueId, FileId is the CSV's ID (SharePoint's item
+    number, not unique across libraries), SiteName is the CSV's folder path, and rows
+    without a UniqueId go to the report CSV.
+
 Existing data - Convert-MhExisting:
     pivots configured keys already in "Metadata" into the horizontal table and
     (optionally) deletes them from "Metadata".
@@ -140,6 +145,8 @@ function Get-MhSettings($AppConfig) {
         MaxLen      = [int](Get-MhProp $sec 'ColumnMaxLength' 4000)
         CurrentOnly = [bool](Get-MhProp $sec 'CurrentVersionOnly' $true)
         RemoveMoved = [bool](Get-MhProp $sec 'RemoveMovedKeysFromMetadata' $true)
+        LinkToFiles = [bool](Get-MhProp $sec 'LinkToFiles' $true)
+        UidCol      = ''                                                 # column of key UniqueId (LinkToFiles = false)
         KeyByLower  = New-Object 'Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
     }
     if (-not $s.Table) { $s.Table = $script:DefaultTable }
@@ -173,6 +180,9 @@ function Get-MhSettings($AppConfig) {
         }
         $s.KeyByLower[$key.ToLowerInvariant()] = $key
     }
+    $uidAt = @(for ($i = 0; $i -lt $s.Keys.Count; $i++) { if ($s.Keys[$i] -ieq 'UniqueId') { $i } })
+    if ($uidAt.Count) { $s.UidCol = $s.Cols[$uidAt[0]] }
+    if (-not $s.LinkToFiles -and -not $s.UidCol) { $errs.Add('HorizontalMetadata.Columns needs the key UniqueId when LinkToFiles is false') }
     if ($errs.Count) { throw ("HorizontalMetadata config error:`n  " + ($errs -join "`n  ")) }
     return $s
 }
@@ -320,7 +330,7 @@ SELECT session_user || ', running as ' || current_user;
 SELECT to_regclass('public."Files"') IS NOT NULL;
 '@
     $msg = "$($l[0])  | login $($l[1])"
-    if ($l[2] -ne 't') { $msg += '  - WARNING: no "Files" table in this database' }
+    if ($l[2] -ne 't') { $msg += '  - WARNING: no "Files" table in this database (needed only when LinkToFiles is true)' }
     return $msg
 }
 
@@ -332,10 +342,11 @@ SELECT to_regclass('public."Files"') IS NOT NULL;
 function Get-MhDdl([hashtable] $S, [switch] $WithSites) {
     $cols = for ($i = 0; $i -lt $S.Cols.Count; $i++) { "    $(q $S.Cols[$i]) varchar($($S.MaxLen))" }
     $siteId = if ($WithSites) { "    `"SiteId`" integer,`n" } else { '' }
+    $fileId = if ($S.LinkToFiles) { '"FileId" integer NOT NULL UNIQUE REFERENCES public."Files"("FileId") ON DELETE CASCADE' } else { '"FileId" integer' }
     return @"
 CREATE TABLE IF NOT EXISTS public.$(q $S.Table) (
     "MetadataHorizontalId" serial PRIMARY KEY,
-    "FileId" integer NOT NULL UNIQUE REFERENCES public."Files"("FileId") ON DELETE CASCADE,
+    $fileId,
     "SiteName" varchar(256),
 $siteId$($cols -join ",`n"),
     "SourceFile" varchar(1000),
@@ -357,8 +368,14 @@ SELECT json_build_object(
     'cols', COALESCE((SELECT json_agg(column_name::text) FROM information_schema.columns
                       WHERE table_schema = 'public' AND table_name = $(lit $t)), '[]'::json),
     'fk', EXISTS (SELECT 1 FROM pg_constraint WHERE conname = $(lit $fk)),
-    'trg', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = $(lit $trg)));
+    'trg', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = $(lit $trg)),
+    'fileid_required', EXISTS (SELECT 1 FROM information_schema.columns
+                               WHERE table_schema = 'public' AND table_name = $(lit $t)
+                                 AND column_name = 'FileId' AND is_nullable = 'NO'));
 "@
+    if (-not $S.LinkToFiles -and [bool]$info.fileid_required) {
+        throw "Table $t already exists and is linked to Files (FileId is required). Set a different HorizontalMetadata.TableName to upload without Files."
+    }
     $sites = [bool]$info.sites
     $existing = New-OrdinalSet
     foreach ($c in @($info.cols)) { [void]$existing.Add([string]$c) }
@@ -374,6 +391,9 @@ SELECT json_build_object(
         }
     }
     [void]$sql.AppendLine("CREATE INDEX IF NOT EXISTS $(q ('IX_' + $t + '_SiteName')) ON public.$(q $t) (`"SiteName`");")
+    if (-not $S.LinkToFiles) {
+        [void]$sql.AppendLine("CREATE UNIQUE INDEX IF NOT EXISTS $(q ('UX_' + $t + '_' + $S.UidCol)) ON public.$(q $t) ($(q $S.UidCol));")
+    }
     if ($sites) {
         # same SiteId convention as the consolidated DB: FK to "Sites", kept by trigger
         [void]$sql.AppendLine("ALTER TABLE public.$(q $t) ADD COLUMN IF NOT EXISTS `"SiteId`" integer;")
@@ -573,14 +593,17 @@ function Get-MhHeaderPlan([string[]] $Headers, [hashtable] $S) {
 function Import-MhFile {
     <# Upload one CSV/XLSX. Returns a stats dictionary. #>
     param([hashtable] $Conn, [hashtable] $S, [string] $Path, [string] $Sheet, [scriptblock] $Log = { param($m) Write-Host $m },
-          [scriptblock] $Progress, [string] $ReportDir)
+          [scriptblock] $Progress, [string] $ReportDir, [string] $SourceName)
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    $name = [IO.Path]::GetFileName($Path)
+    $name = if ($SourceName) { $SourceName } else { [IO.Path]::GetFileName($Path) }
     $reader = Open-MhReader $Path $Sheet
     try {
         $headers = [string[]]$reader.Headers
         $plan = Get-MhHeaderPlan $headers $S
         $ids = $plan.Ids
+        if (-not $S.LinkToFiles -and -not $ids.ContainsKey('UniqueId')) {
+            throw 'The file needs a UniqueId column to upload without Files'
+        }
         if (-not ($ids.ContainsKey('FileId') -or $ids.ContainsKey('UniqueId') -or $ids.ContainsKey('FileRef') -or
                   $ids.ContainsKey('OriginalSharePointPath'))) {
             throw ('The file needs at least one of these columns to find the file: ' +
@@ -624,7 +647,7 @@ CREATE TEMP TABLE mh_stage (
 COPY mh_stage (row_no, file_id_in, unique_id, file_ref, orig_path, h) FROM STDIN
     WITH (FORMAT csv, FORCE_NOT_NULL (file_id_in, unique_id, file_ref, orig_path));
 '@
-        $tail = Get-MhUploadSql $S $plan $headers $name
+        $tail = if ($S.LinkToFiles) { Get-MhUploadSql $S $plan $headers $name } else { Get-MhUploadSqlNoFiles $S $plan $name (Get-MhSiteNameFromPath $Path) }
 
         $writer = {
             param($w)
@@ -682,13 +705,17 @@ COPY mh_stage (row_no, file_id_in, unique_id, file_ref, orig_path, h) FROM STDIN
             if ($f[1]) { $by[$f[1]] = [long]$f[2]; $stats.matched += [long]$f[2] } else { $stats.unmatched = [long]$f[2] }
         } elseif ($f[0] -eq 'STAT') { $stats[$f[1]] = [long]$f[2] }
     }
-    & $Log ('Matched ' + (($by.Keys | ForEach-Object { "${_}: $(fmt $by[$_])" }) -join ', ') + "; unmatched: $(fmt $stats.unmatched)")
+    if ($S.LinkToFiles) {
+        & $Log ('Matched ' + (($by.Keys | ForEach-Object { "${_}: $(fmt $by[$_])" }) -join ', ') + "; unmatched: $(fmt $stats.unmatched)")
+    } else {
+        & $Log "Rows with a UniqueId: $(fmt $stats.matched); without (not saved): $(fmt $stats.unmatched)"
+    }
     if ($stats.duplicates) { & $Log "$(fmt $stats.duplicates) duplicate row(s) for the same file ignored (last row wins)" }
 
     if ($stats.unmatched) {
         if (-not $ReportDir) { $ReportDir = Join-Path $script:AppDir 'logs' }
         [void](New-Item -ItemType Directory -Force -Path $ReportDir)
-        $rpt = Join-Path $ReportDir ("unmatched_$([IO.Path]::GetFileNameWithoutExtension($Path))_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv")
+        $rpt = Join-Path $ReportDir ("unmatched_$(($name -replace '\.[^.\\/]+$', '') -replace '[\\/:]', '_')_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv")
         [IO.File]::WriteAllText($rpt, $report, (New-Object Text.UTF8Encoding($true)))
         $stats.unmatched_report = $rpt
         & $Log "Unmatched rows written to $rpt"
@@ -697,6 +724,124 @@ COPY mh_stage (row_no, file_id_in, unique_id, file_ref, orig_path, h) FROM STDIN
     & $Log ("Done: $(fmt $stats.horizontal_rows) horizontal rows upserted, " +
             "$(fmt $stats.vertical_deleted) old Metadata rows of those keys removed  [$(secs $sw)s]")
     return $stats
+}
+
+function Get-MhCsvFiles([string] $Folder) {
+    <# Every .csv under $Folder, subfolders included, sorted by path: in one folder, a later scan of a library comes after an earlier one. #>
+    @(Get-ChildItem -LiteralPath $Folder -Filter '*.csv' -Recurse -File | Where-Object { $_.Extension -eq '.csv' } | Sort-Object FullName)
+}
+
+function Get-MhUploadStamp([hashtable] $S) {
+    <# Changes when the columns or the table do: a file loaded under another setup has to load again. #>
+    $text = "$($S.Table)`n$($S.LinkToFiles)`n" + ((0..($S.Keys.Count - 1) | ForEach-Object { "$($S.Keys[$_])=$($S.Cols[$_])" }) -join "`n")
+    $sha = [Security.Cryptography.SHA1]::Create()
+    try { -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)) | ForEach-Object { $_.ToString('x2') }) }
+    finally { $sha.Dispose() }
+}
+
+function Get-MhUploadKey($File, [string] $Stamp) { "$($File.FullName)|$($File.Length)|$($File.LastWriteTimeUtc.Ticks)|$Stamp" }
+
+function Get-MhLoadedFiles([hashtable] $Conn, [hashtable] $S, [scriptblock] $Log) {
+    <# Make sure the record of loaded files exists -> the keys of the files it holds, or $null if it cannot be used.
+       When the data table is missing or empty the record no longer means anything, so it is cleared. #>
+    $ledger = q ($S.Table + 'UploadedFiles')
+    $t = "public.$(q $S.Table)"
+    try {
+        [void](Invoke-MhPsql -Conn $Conn -Sql @"
+CREATE TABLE IF NOT EXISTS public.$ledger (
+    "FilePath" text PRIMARY KEY,
+    "FileSize" bigint NOT NULL,
+    "LastWriteTicks" bigint NOT NULL,
+    "ColumnsStamp" varchar(40) NOT NULL,
+    "RowsRead" bigint,
+    "LoadedAt" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"@)
+        $exists = (Get-MhLines $Conn "SELECT to_regclass($(lit $t)) IS NOT NULL;")[0] -eq 't'
+        $hasRows = $exists -and (Get-MhLines $Conn "SELECT EXISTS (SELECT 1 FROM $t);")[0] -eq 't'
+        if (-not $hasRows) { [void](Invoke-MhPsql -Conn $Conn -Sql "TRUNCATE public.$ledger;") }
+        $set = New-OrdinalSet
+        foreach ($l in (Get-MhLines $Conn "SELECT `"FilePath`" || '|' || `"FileSize`" || '|' || `"LastWriteTicks`" || '|' || `"ColumnsStamp`" FROM public.$ledger;")) { [void]$set.Add($l) }
+        return , $set
+    } catch {
+        & $Log "Could not use the record of loaded files, so every file loads and none is remembered: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Save-MhLoadedFile([hashtable] $Conn, [hashtable] $S, $File, [string] $Stamp, [long] $Rows, [scriptblock] $Log) {
+    <# After the file's own commit: if this is lost, the file just loads again next time. #>
+    $ledger = q ($S.Table + 'UploadedFiles')
+    try {
+        [void](Invoke-MhPsql -Conn $Conn -Sql @"
+INSERT INTO public.$ledger ("FilePath", "FileSize", "LastWriteTicks", "ColumnsStamp", "RowsRead")
+VALUES ($(lit $File.FullName), $($File.Length), $($File.LastWriteTimeUtc.Ticks), $(lit $Stamp), $Rows)
+ON CONFLICT ("FilePath") DO UPDATE SET "FileSize" = EXCLUDED."FileSize", "LastWriteTicks" = EXCLUDED."LastWriteTicks",
+    "ColumnsStamp" = EXCLUDED."ColumnsStamp", "RowsRead" = EXCLUDED."RowsRead", "LoadedAt" = CURRENT_TIMESTAMP;
+"@)
+    } catch { & $Log "$($File.Name) loaded, but could not be recorded, so it will load again next time: $($_.Exception.Message)" }
+}
+
+function Import-MhFolder {
+    <# Upload every CSV under a folder, one transaction per file. A file that fails is rolled back and listed,
+       and the others still load. Uploading again gives the same result, so a failed folder can simply be run again.
+       If two files hold the same file, the one uploaded last wins.
+       Each loaded file is recorded in the table <Table>UploadedFiles. With -SkipLoaded, files recorded with the same path, size,
+       modified time and columns are skipped, unless an earlier file in the same folder has to load: a later scan must still win.
+       $Progress gets (total rows read, file number, file count, file). Returns a stats dictionary. #>
+    param([hashtable] $Conn, [hashtable] $S, [string] $Folder, [scriptblock] $Log = { param($m) Write-Host $m },
+          [scriptblock] $Progress, [string] $ReportDir, [switch] $SkipLoaded)
+    $folderClock = [Diagnostics.Stopwatch]::StartNew()
+    $folderRoot = [IO.Path]::GetFullPath($Folder).TrimEnd('\', '/')
+    $csvFiles = Get-MhCsvFiles $folderRoot
+    if (-not $csvFiles.Count) { throw "No .csv files found in $folderRoot" }
+    if (-not $ReportDir) { $ReportDir = Join-Path $script:AppDir 'logs' }
+    $folderReports = Join-Path $ReportDir ("unmatched_$([IO.Path]::GetFileName($folderRoot))_$(Get-Date -Format 'yyyyMMdd_HHmmss')")
+    $totals = [ordered]@{ files = $csvFiles.Count; files_failed = 0; files_skipped = 0; rows_read = [long]0; folders_skipped = [long]0; versions_skipped = [long]0
+                          staged = [long]0; matched = [long]0; unmatched = [long]0; horizontal_rows = [long]0; vertical_deleted = [long]0; duplicates = [long]0 }
+    $failedFiles = New-Object 'Collections.Generic.List[string]'
+    # which files to load: in one folder, everything from the first file that has to load onward
+    $uploadStamp = Get-MhUploadStamp $S
+    $loaded = Get-MhLoadedFiles $Conn $S $Log
+    $toLoad = New-Object 'Collections.Generic.List[object]'
+    $reloadDirs = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($csvFile in $csvFiles) {
+        if ($SkipLoaded -and $null -ne $loaded -and -not $reloadDirs.Contains($csvFile.DirectoryName) -and $loaded.Contains((Get-MhUploadKey $csvFile $uploadStamp))) {
+            $totals.files_skipped++
+        } else {
+            [void]$reloadDirs.Add($csvFile.DirectoryName)
+            $toLoad.Add($csvFile)
+        }
+    }
+    if ($SkipLoaded) { & $Log "Skipping $(fmt $totals.files_skipped) of $(fmt $csvFiles.Count) files already loaded and unchanged; $(fmt $toLoad.Count) to load" }
+    # these names must differ from Import-MhFile's: it calls $fileProgress, which would otherwise see its variables
+    $folderProgress = $Progress; $folderIndex = 0; $folderRows = [long]0; $folderRel = ''
+    $fileProgress = { param($rows) if ($folderProgress) { & $folderProgress ($folderRows + $rows) $folderIndex $toLoad.Count $folderRel } }
+    foreach ($csvFile in $toLoad) {
+        $folderIndex++
+        $folderRel = $csvFile.FullName.Substring($folderRoot.Length).TrimStart('\', '/')
+        & $Log "File $folderIndex of $($toLoad.Count): $folderRel"
+        try {
+            $one = Import-MhFile -Conn $Conn -S $S -Path $csvFile.FullName -Log $Log -Progress $fileProgress -ReportDir $folderReports -SourceName $folderRel
+            foreach ($k in @($totals.Keys)) { if ($one.Contains($k)) { $totals[$k] += [long]$one[$k] } }
+            $folderRows = $totals.rows_read
+            # linked to Files, an unmatched row may match later: such a file is not finished
+            if ($null -ne $loaded -and -not ($S.LinkToFiles -and [long]$one.unmatched -gt 0)) { Save-MhLoadedFile $Conn $S $csvFile $uploadStamp ([long]$one.rows_read) $Log }
+        } catch {
+            $totals.files_failed++
+            $failedFiles.Add($folderRel)
+            & $Log "FAILED, nothing changed for this file: $folderRel`: $($_.Exception.Message)"
+        }
+    }
+    if ($totals.unmatched) { $totals.unmatched_reports = $folderReports }
+    $totals.failed = [string[]]$failedFiles.ToArray()
+    $totals.seconds = [Math]::Round($folderClock.Elapsed.TotalSeconds, 1)
+    & $Log ("Folder done: $(fmt ($totals.files - $totals.files_failed - $totals.files_skipped)) of $(fmt $totals.files) files loaded, $(fmt $totals.files_skipped) skipped, $(fmt $totals.files_failed) failed, $(fmt $totals.matched) rows matched, " +
+            "$(fmt $totals.unmatched) unmatched, $(fmt $totals.horizontal_rows) horizontal rows upserted, " +
+            "$(fmt $totals.vertical_deleted) old Metadata rows of those keys removed  [$(secs $folderClock)s]")
+    if ($totals.unmatched) { & $Log "Unmatched rows are in $folderReports" }
+    if ($failedFiles.Count) { & $Log ("Files that failed: " + ($failedFiles -join '; ')) }
+    return $totals
 }
 
 function Get-MhUploadSql([hashtable] $S, [hashtable] $Plan, [string[]] $Headers, [string] $SourceName) {
@@ -785,6 +930,63 @@ COMMIT;
 }
 
 
+function Get-MhSiteNameFromPath([string] $Path) {
+    <# The folder path of a scan CSV as a site name: ...\ishare\s\ecr\x.csv -> s/ecr, ...\ekm\cs\blog\x.csv -> ekm/cs/blog.
+       Outside those two trees: the name of the folder holding the file. #>
+    $parts = @(([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))) -split '[\\/]' | Where-Object { $_ })
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        if ($parts[$i] -ieq 'ishare' -and $i -lt $parts.Count - 1) { return ($parts[($i + 1)..($parts.Count - 1)] -join '/') }
+    }
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        if ($parts[$i] -ieq 'ekm') { return ($parts[$i..($parts.Count - 1)] -join '/') }
+    }
+    return $parts[-1]
+}
+
+function Get-MhUploadSqlNoFiles([hashtable] $S, [hashtable] $Plan, [string] $SourceName, [string] $SiteName) {
+    <# SQL after the staged rows when LinkToFiles is false: upsert by UniqueId, without "Files" or "Metadata".
+       UniqueId is stored normalized (lower case, no braces); FileId comes from the key ID; SiteName from the caller. Ends with COMMIT. #>
+    $t = q $S.Table
+    $uid = q $S.UidCol
+    $inFile = New-OrdinalSet
+    foreach ($k in $Plan.Horiz.Values) { [void]$inFile.Add($k) }
+    $present = @(for ($i = 0; $i -lt $S.Keys.Count; $i++) { if ($inFile.Contains($S.Keys[$i])) { $i } })
+    $cols = ($present | ForEach-Object { q $S.Cols[$_] }) -join ', '
+    $sel = ($present | ForEach-Object { if ($S.Cols[$_] -ceq $S.UidCol) { 's.unique_id' } else { "NULLIF(s.h->>$(lit $S.Keys[$_]), '')" } }) -join ', '
+    $upd = ($present | Where-Object { $S.Cols[$_] -cne $S.UidCol } | ForEach-Object { "$(q $S.Cols[$_]) = EXCLUDED.$(q $S.Cols[$_]), " }) -join ''
+    # FileId = ID when it is a whole number that fits the integer column
+    $idKey = $null
+    $fileIdSql = 'NULL::integer'
+    if ($S.KeyByLower.TryGetValue('id', [ref]$idKey) -and $inFile.Contains($idKey)) {
+        $idText = "s.h->>$(lit $idKey)"
+        $fileIdSql = "CASE WHEN $idText ~ " + "'^[0-9]{1,9}`$'" + " THEN ($idText)::integer END"
+    }
+    return @"
+UPDATE mh_stage SET matched_by = 'UniqueId' WHERE unique_id <> '';
+SELECT 'BY|' || COALESCE(matched_by, '') || '|' || count(*) FROM mh_stage GROUP BY matched_by ORDER BY matched_by NULLS LAST;
+-- duplicate rows for one file: the LAST row in the file wins
+WITH d AS (DELETE FROM mh_stage s USING mh_stage s2
+           WHERE s.unique_id <> '' AND s.unique_id = s2.unique_id AND s.row_no < s2.row_no RETURNING 1)
+SELECT 'STAT|duplicates|' || count(*) FROM d;
+WITH x AS (
+    INSERT INTO public.$t ($cols, "FileId", "SiteName", "SourceFile")
+    SELECT $sel, $fileIdSql, $(lit (cut $SiteName 256)), $(lit (cut $SourceName 1000))
+    FROM mh_stage s WHERE s.unique_id <> ''
+    ON CONFLICT ($uid) DO UPDATE SET $upd"FileId" = EXCLUDED."FileId", "SiteName" = EXCLUDED."SiteName",
+        "SourceFile" = EXCLUDED."SourceFile", "UpdatedAt" = CURRENT_TIMESTAMP
+    RETURNING 1)
+SELECT 'STAT|horizontal_rows|' || count(*) FROM x;
+SELECT '#REPORT';
+COPY (SELECT row_no AS "SourceRowNo", NULLIF(file_id_in, '') AS "FileId", NULLIF(unique_id, '') AS "UniqueId",
+             NULLIF(file_ref, '') AS "FileRef",
+             NULLIF(orig_path, '') AS "OriginalSharePointPath"
+      FROM mh_stage WHERE unique_id = '' ORDER BY row_no) TO STDOUT WITH (FORMAT csv, HEADER);
+COMMIT;
+
+"@
+}
+
+
 # ---------------------------------------------------------------------------
 # Convert existing vertical Metadata
 # ---------------------------------------------------------------------------
@@ -792,6 +994,7 @@ COMMIT;
 function Convert-MhExisting([hashtable] $Conn, [hashtable] $S, $RemoveFromVertical = $null, [scriptblock] $Log = { param($m) Write-Host $m }) {
     <# Pivot configured keys already in "Metadata" into the horizontal table.
        Existing horizontal values are only overwritten by non-empty vertical values. #>
+    if (-not $S.LinkToFiles) { throw 'Convert needs "Files" and "Metadata": set HorizontalMetadata.LinkToFiles to true first' }
     if ($null -eq $RemoveFromVertical) { $RemoveFromVertical = $S.RemoveMoved }
     [void](Initialize-MhTable $Conn $S -Log $Log)
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -942,12 +1145,17 @@ function Get-MhTableView([hashtable] $Conn, [string] $Table, [int] $Limit = 500)
     <# First $Limit rows (with the file path in front) -> @{ Columns; Rows; Total }, or $null if
        the table does not exist. #>
     $t = "public.$(q $Table)"
-    if ((Get-MhLines $Conn "SELECT to_regclass($(lit $t)) IS NOT NULL;")[0] -ne 't') { return $null }
+    $found = @(Get-MhLines $Conn "SELECT to_regclass($(lit $t)) IS NOT NULL, to_regclass('public.`"Files`"') IS NOT NULL;")
+    $parts = $found[0].Split('|')
+    if ($parts[0] -ne 't') { return $null }
+    $query = if ($parts[1] -eq 't') {
+        "SELECT f.`"OriginalSharePointPath`", h.* FROM $t h LEFT JOIN public.`"Files`" f ON f.`"FileId`" = h.`"FileId`" ORDER BY h.`"FileId`" LIMIT $Limit"
+    } else {
+        "SELECT h.* FROM $t h ORDER BY 1 LIMIT $Limit"
+    }
     $out = Invoke-MhPsql -Conn $Conn -Sql @"
 SELECT count(*) FROM $t;
-COPY (SELECT f."OriginalSharePointPath", h.* FROM $t h
-      JOIN public."Files" f ON f."FileId" = h."FileId"
-      ORDER BY h."FileId" LIMIT $Limit) TO STDOUT WITH (FORMAT csv, HEADER);
+COPY ($query) TO STDOUT WITH (FORMAT csv, HEADER);
 "@
     $nl = $out.IndexOf("`n")
     $rows = Read-MhCsvText $out.Substring($nl + 1)
@@ -959,4 +1167,4 @@ COPY (SELECT f."OriginalSharePointPath", h.* FROM $t h
 
 Export-ModuleMember -Function Read-MhConfig, Save-MhConnection, Get-MhRoleName, Get-MhSettings, Get-MhMatrixTable,
     Find-MhPsql, New-MhConnection, Invoke-MhPsql, Test-MhConnection, Get-MhDdl, Initialize-MhTable, Open-MhReader,
-    Read-MhRow, Close-MhReader, Import-MhFile, Convert-MhExisting, Update-MhMatrix, Get-MhTableView
+    Read-MhRow, Close-MhReader, Import-MhFile, Get-MhCsvFiles, Import-MhFolder, Convert-MhExisting, Update-MhMatrix, Get-MhTableView

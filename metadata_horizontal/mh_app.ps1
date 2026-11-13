@@ -68,6 +68,8 @@ $Dot = [string][char]0x25CF
 $script:AppConfig = $null
 $script:Db = $null          # connection settings once Connect succeeded
 $script:Job = $null         # the one running background job
+$script:SpQueue = New-Object 'Collections.Generic.List[object]'   # SharePoint export queue, one output file per row
+$script:SpQueueOn = $false; $script:SpQueueJob = $null; $script:SpQueueItem = $null; $script:SpQueueStopping = $false
 $Sync = [hashtable]::Synchronized(@{ Queue = New-Object 'Collections.Concurrent.ConcurrentQueue[object]' })
 
 
@@ -165,10 +167,10 @@ function Show-JobElapsed {
 }
 
 $WorkerScript = {
-    param($Modules, $Sync, $Title, $BodyText, $Db, $Arg)
+    param($Modules, $Sync, $Title, $BodyText, $Db, $Arg, $StatusKind)
     $ErrorActionPreference = 'Stop'
     $log = { param($m) $Sync.Queue.Enqueue(@('log', $Title, [string]$m)) }.GetNewClosure()
-    $setStatus = { param($m, $percent) $Sync.Queue.Enqueue(@('status', [string]$m, $percent)) }.GetNewClosure()
+    $setStatus = { param($m, $percent) $Sync.Queue.Enqueue(@($StatusKind, [string]$m, $percent)) }.GetNewClosure()
     try {
         foreach ($m in $Modules) {
             if ($m.Path) { Import-Module $m.Path -DisableNameChecking }
@@ -181,6 +183,18 @@ $WorkerScript = {
     }
 }.ToString()
 
+function New-MhWorker([string] $Title, [scriptblock] $Body, $Arg, [string] $StatusKind) {
+    <# Start $Body in its own background runspace -> @{ PS; Runspace; Handle; Title }. #>
+    $iss = [Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+    try { $iss.ExecutionPolicy = 'Bypass' } catch { }
+    $rs = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($iss)
+    $rs.Open()
+    $ps = [PowerShell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript($WorkerScript).AddArgument($Modules).AddArgument($Sync).AddArgument($Title).AddArgument($Body.ToString()).AddArgument($script:Db).AddArgument($Arg).AddArgument($StatusKind)
+    @{ PS = $ps; Runspace = $rs; Handle = $ps.BeginInvoke(); Title = $Title }
+}
+
 function Start-MhJob {
     <# Run $Body { param($Db, $Arg, $Log, $Status) } in a background runspace; one job at a time.
        $OnDone / $OnFail run on the UI thread with the result / error message. #>
@@ -188,15 +202,8 @@ function Start-MhJob {
           [switch] $NoConnection, [switch] $Quiet)
     if (-not $NoConnection -and -not $script:Db) { Show-Message 'Connect to the database first.' 'Not connected' 'Warning'; return }
     if ($script:Job) { Show-Message 'Another job is still running.' 'Busy'; return }
-    $iss = [Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
-    try { $iss.ExecutionPolicy = 'Bypass' } catch { }
-    $rs = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($iss)
-    $rs.Open()
-    $ps = [PowerShell]::Create()
-    $ps.Runspace = $rs
-    [void]$ps.AddScript($WorkerScript).AddArgument($Modules).AddArgument($Sync).AddArgument($Title).AddArgument($Body.ToString()).AddArgument($script:Db).AddArgument($Arg)
-    $script:Job = @{ PS = $ps; Runspace = $rs; Handle = $ps.BeginInvoke(); Title = $Title
-                     OnDone = $OnDone; OnFail = $OnFail; Quiet = [bool]$Quiet }
+    $script:Job = New-MhWorker $Title $Body $Arg 'status'
+    $script:Job.OnDone = $OnDone; $script:Job.OnFail = $OnFail; $script:Job.Quiet = [bool]$Quiet
     if (-not $Quiet) {
         Set-Status "${Title}: running..."
         Write-Log $Title 'started'
@@ -313,6 +320,41 @@ function Start-Upload([string] $Path) {
     } -OnDone { Show-Table }
 }
 
+function Start-UploadFolder {
+    if (-not $script:Db) { Show-Message 'Connect to the database first.' 'Not connected' 'Warning'; return }
+    $pick = New-Object Windows.Forms.FolderBrowserDialog
+    $pick.Description = 'Upload every CSV in this folder (subfolders are included)'
+    $pick.ShowNewFolderButton = $false
+    if ($pick.ShowDialog($form) -ne 'OK') { return }
+    $path = $pick.SelectedPath
+    $count = @(Get-MhCsvFiles $path).Count
+    if (-not $count) { Show-Message "No .csv files found in $path" 'Upload CSV folder' 'Warning'; return }
+    $text = ("Upload $count CSV file(s) from $path to $($script:Db.Database)?`n`n" +
+             'Each file is loaded in its own transaction. New values replace what the table holds for the same file, ' +
+             "so uploading an older scan over a newer export brings the older values back.`n`n" +
+             "Yes: skip files already loaded and unchanged, so a stopped upload continues.`n" +
+             "No: upload every file again.`nCancel: don't upload.")
+    $answer = [Windows.Forms.MessageBox]::Show($form, $text, 'Upload CSV folder', 'YesNoCancel', 'Question')
+    if ($answer -eq 'Cancel') { return }
+    Start-UploadFolderJob $path ($answer -eq 'Yes')
+}
+
+function Start-UploadFolderJob([string] $path, [bool] $SkipLoaded) {
+    $s = Get-FreshSettings
+    if (-not $s) { return }
+    $folder = [string](Get-ConfigValue 'UnmatchedReportFolder' 'logs')
+    $reportDir = if ([IO.Path]::IsPathRooted($folder)) { $folder } else { Join-Path $AppDir $folder }
+    Start-MhJob 'Upload folder' -Arg @{ S = $s; Path = $path; ReportDir = $reportDir; SkipLoaded = $SkipLoaded } -Body {
+        param($Db, $Arg, $Log, $Status)
+        $progress = { param($n, $i, $count, $file) & $Status ('Upload folder: file {0:N0} of {1:N0}, {2:N0} rows read ({3})...' -f $i, $count, $n, $file) }.GetNewClosure()
+        Import-MhFolder -Conn $Db -S $Arg.S -Folder $Arg.Path -Log $Log -ReportDir $Arg.ReportDir -Progress $progress -SkipLoaded:$Arg.SkipLoaded
+    } -OnDone {
+        param($r)
+        Show-Table
+        if ($r.files_failed) { Show-Message ("$($r.files_failed) of $($r.files) files failed and were not changed. The others loaded.`n`n" + (@($r.failed | Select-Object -First 15) -join "`n")) 'Upload CSV folder' 'Warning' }
+    }
+}
+
 function Start-Convert {
     $remove = $chkRemove.Checked
     $text = ("Copy the configured keys from the vertical Metadata table into the horizontal table (one row per file)?`n`n" +
@@ -419,22 +461,25 @@ function Show-SharePointExport {
     if ($script:SpForm) { $script:SpForm.Show(); $script:SpForm.Activate(); return }
     $f = New-Object Windows.Forms.Form
     $f.Text = 'Export from SharePoint 2013'
-    $f.Size = New-Object Drawing.Size(900, 620)
-    $f.MinimumSize = New-Object Drawing.Size(700, 420)
+    $work = [Windows.Forms.Screen]::FromControl($form).WorkingArea
+    $f.Size = New-Object Drawing.Size([Math]::Min(1060, $work.Width), [Math]::Min(860, $work.Height))
+    $f.MinimumSize = New-Object Drawing.Size(760, 560)
     $f.StartPosition = 'CenterParent'
     $f.BackColor = $ColorDark; $f.ForeColor = $ColorWhite; $f.Font = $form.Font
     $grid2 = New-Object Windows.Forms.TableLayoutPanel
-    $grid2.Dock = 'Fill'; $grid2.ColumnCount = 1; $grid2.RowCount = 7
+    $grid2.Dock = 'Fill'; $grid2.ColumnCount = 1; $grid2.RowCount = 9
     $grid2.Padding = New-Object Windows.Forms.Padding(8)
-    foreach ($st in @(@('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('Percent', 100), @('AutoSize', 0), @('AutoSize', 0))) {
+    foreach ($st in @(@('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('AutoSize', 0), @('Percent', 60), @('AutoSize', 0), @('Percent', 40), @('AutoSize', 0), @('AutoSize', 0))) {
         [void]$grid2.RowStyles.Add((New-Object Windows.Forms.RowStyle($st[0], $st[1])))
     }
     $f.Controls.Add($grid2)
 
     $row = New-Flow $ColorPanel
-    $row.Controls.Add((New-Label 'Site URL'))
+    $row.Controls.Add((New-Label 'Site URLs'))
     $script:SpUrl = New-TextBox '' 640
+    $script:SpUrl.Multiline = $true; $script:SpUrl.AcceptsReturn = $true; $script:SpUrl.ScrollBars = 'Vertical'; $script:SpUrl.Height = 62
     $row.Controls.Add($script:SpUrl)
+    $row.Controls.Add((New-Label 'One site per line. You can load more sites while an export runs.'))
     $grid2.Controls.Add($row, 0, 0)
 
     $row = New-Flow $ColorPanel
@@ -467,7 +512,7 @@ function Show-SharePointExport {
     $row.Controls.Add((New-Button 'Select none' (Col '#444444') { Set-SpChecked $false }))
     $row.Controls.Add((New-Button 'Expand all' (Col '#444444') { $script:SpTree.ExpandAll() }))
     $row.Controls.Add((New-Button 'Collapse all' (Col '#444444') { $script:SpTree.CollapseAll() }))
-    $script:SpCount = New-Label 'Enter the site URL, then Load libraries. System libraries (Style Library, Site Pages...) start unticked.'
+    $script:SpCount = New-Label 'Enter the site URLs, then Load libraries. System libraries (Style Library, Site Pages...) start unticked.'
     $row.Controls.Add($script:SpCount)
     $grid2.Controls.Add($row, 0, 2)
 
@@ -497,13 +542,52 @@ function Show-SharePointExport {
     $grid2.Controls.Add($script:SpTree, 0, 4)
 
     $row = New-Flow $ColorDark
-    $row.Controls.Add((New-Label 'File name'))
-    $script:SpFileName = New-TextBox 'sharepoint_metadata_{date}_{time}.xlsx' 300
+    $row.Controls.Add((New-Label 'Export name'))
+    $script:SpFileName = New-TextBox 'sharepoint_metadata_{date}_{time}.xlsx' 280
     $row.Controls.Add($script:SpFileName)
-    $row.Controls.Add((New-Button 'Export to Excel...' $ColorOrange { Start-SpExport } -Bold -Fore ([Drawing.Color]::Black)))
-    $row.Controls.Add((New-Button 'Schedule...' $ColorBlue { Show-SpSchedule } -Bold))
+    $row.Controls.Add((New-Label 'Save in folder'))
+    $script:SpFolder = New-TextBox ([Environment]::GetFolderPath('MyDocuments')) 240
+    $row.Controls.Add($script:SpFolder)
+    $row.Controls.Add((New-Button 'Browse...' (Col '#444444') {
+        $pick = New-Object Windows.Forms.FolderBrowserDialog
+        $pick.SelectedPath = $script:SpFolder.Text
+        if ($pick.ShowDialog($script:SpForm) -eq 'OK') { $script:SpFolder.Text = $pick.SelectedPath }
+    }))
+    $row.Controls.Add((New-Button 'Add to queue' $ColorOrange { Add-SpQueueItem } -Bold -Fore ([Drawing.Color]::Black)))
+    $row.Controls.Add((New-Button 'Export now...' (Col '#444444') { Start-SpExport }))
+    $row.Controls.Add((New-Button 'Schedule...' (Col '#444444') { Show-SpSchedule }))
     $row.Controls.Add((New-Label '{date} and {time} are filled in when it runs. End the name with .csv for a CSV file.'))
     $grid2.Controls.Add($row, 0, 5)
+
+    # the queue: each row is one output file, run one after another
+    $script:SpQueueList = New-Object Windows.Forms.ListView
+    $script:SpQueueList.Dock = 'Fill'; $script:SpQueueList.View = 'Details'; $script:SpQueueList.FullRowSelect = $true
+    $script:SpQueueList.HideSelection = $false; $script:SpQueueList.ShowItemToolTips = $true
+    $script:SpQueueList.BackColor = $ColorField; $script:SpQueueList.ForeColor = $ColorWhite
+    foreach ($c in @(@('State', 80), @('Export name', 230), @('Site', 220), @('Libraries', 60), @('Items', 80), @('Result', 340))) {
+        [void]$script:SpQueueList.Columns.Add($c[0], $c[1])
+    }
+    $grid2.Controls.Add($script:SpQueueList, 0, 6)
+
+    $row = New-Flow $ColorDark
+    $script:SpQueueStart = New-Button 'Start queue' $ColorBlue { Start-SpQueue } -Bold
+    $row.Controls.Add($script:SpQueueStart)
+    $script:SpQueuePause = New-Button 'Pause after this export' (Col '#444444') { Stop-SpQueue }
+    $row.Controls.Add($script:SpQueuePause)
+    $row.Controls.Add((New-Button 'Stop now' (Col '#444444') { Stop-SpQueue -Now }))
+    $row.Controls.Add((New-Button 'Retry' (Col '#444444') { Reset-SpQueueItems }))
+    $row.Controls.Add((New-Button 'Remove' (Col '#444444') { Remove-SpQueueItems }))
+    $row.Controls.Add((New-Button 'Clear finished' (Col '#444444') { Remove-SpQueueItems -Finished }))
+    $row.Controls.Add((New-Button 'Open logs' (Col '#444444') {
+        $dir = Join-Path $AppDir 'logs'
+        [void][IO.Directory]::CreateDirectory($dir)
+        Start-Process -FilePath explorer.exe -ArgumentList "`"$dir`""
+    }))
+    $script:SpQueueBar = New-JobBar
+    $row.Controls.Add($script:SpQueueBar)
+    $script:SpQueueStatus = New-Label ''
+    $row.Controls.Add($script:SpQueueStatus)
+    $grid2.Controls.Add($row, 0, 7)
 
     $row = New-Flow $ColorDark
     $script:SpBar = New-JobBar
@@ -511,11 +595,12 @@ function Show-SharePointExport {
     $script:SpStatus = New-Label ''
     $script:SpStatus.Margin = New-Object Windows.Forms.Padding(4, 6, 4, 4)
     $row.Controls.Add($script:SpStatus)
-    $grid2.Controls.Add($row, 0, 6)
+    $grid2.Controls.Add($row, 0, 8)
 
     # closing only hides the window, so the loaded library list is kept
     $f.Add_FormClosing({ param($sender, $e) if ($e.CloseReason -eq 'UserClosing') { $e.Cancel = $true; $sender.Hide() } })
     $script:SpForm = $f
+    Open-SpQueue
     $f.Show($form)
 }
 
@@ -612,29 +697,47 @@ function Sync-SpCheck($e) {
 }
 
 function Start-SpLoad {
-    $url = $script:SpUrl.Text.Trim()
-    if (-not $url) { Show-Message 'Enter the SharePoint site URL, e.g. https://sharepoint.corp/sites/abc' 'Site URL' 'Warning'; return }
+    $urls = @($script:SpUrl.Text -split '\r?\n' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
+    if (-not $urls.Count) { Show-Message 'Enter the SharePoint site URLs, one per line, e.g. https://sharepoint.corp/sites/abc' 'Site URL' 'Warning'; return }
     $user = if ($script:SpWindows.Checked) { '' } else { $script:SpUser.Text.Trim() }
     if (-not $script:SpWindows.Checked -and -not $user) { Show-Message 'Enter the user as DOMAIN\user.' 'User' 'Warning'; return }
-    Start-MhJob 'SharePoint' -NoConnection -Arg @{ Url = $url; User = $user; Password = $script:SpPassword.Text
+    Start-MhJob 'SharePoint' -NoConnection -Arg @{ Urls = $urls; User = $user; Password = $script:SpPassword.Text
                                                  Recurse = $script:SpSubsites.Checked; LogDir = (Join-Path $AppDir 'logs') } -Body {
         param($Db, $Arg, $Log, $Status)
-        $sp = New-SpSession $Arg.Url $Arg.User $Arg.Password (New-SpRequestLog $Arg.LogDir $Log)
-        & $Log "Connected to $($sp.Url) ($($sp.Title))"
+        $requestLog = New-SpRequestLog $Arg.LogDir $Log
         $libs = New-Object 'Collections.Generic.List[hashtable]'
-        foreach ($w in (Get-SpWebs $sp -Recurse:$Arg.Recurse -Log $Log)) {
-            & $Status "SharePoint: reading libraries of $($w.Url)..."
-            try { $libs.AddRange((Get-SpLibraries $sp $w)) }
-            catch { & $Log "Libraries of $($w.Url) skipped: $($_.Exception.Message.Split("`n")[0])" }
+        $seen = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        $sp = $null
+        $failed = New-Object 'Collections.Generic.List[string]'
+        foreach ($url in $Arg.Urls) {
+            try {
+                $site = New-SpSession $url $Arg.User $Arg.Password $requestLog
+                & $Log "Connected to $($site.Url) ($($site.Title))"
+                foreach ($w in (Get-SpWebs $site -Recurse:$Arg.Recurse -Log $Log)) {
+                    & $Status "SharePoint: reading libraries of $($w.Url)..."
+                    try {
+                        foreach ($l in (Get-SpLibraries $site $w)) { if ($seen.Add($l.Id)) { $libs.Add($l) } }
+                    } catch { & $Log "Libraries of $($w.Url) skipped: $($_.Exception.Message.Split("`n")[0])" }
+                }
+                $sp = $site
+            } catch {
+                $failed.Add("$url`n  $($_.Exception.Message.Split("`n")[0])")
+                & $Log "$url could not be loaded: $($_.Exception.Message.Split("`n")[0])"
+            }
         }
+        if (-not $sp) { throw ($failed -join "`n") }
         & $Log "$($libs.Count) document libraries found"
-        @{ Session = $sp; Libs = $libs; libraries = $libs.Count }
+        @{ Session = $sp; Libs = $libs; Failed = [string[]]$failed.ToArray(); libraries = $libs.Count }
     } -OnDone {
         param($r)
         $script:SpSession = $r.Session
         $script:SpLibs = @($r.Libs)
-        $script:SpChecked = [bool[]]@($script:SpLibs | ForEach-Object { -not $_.System })
+        # a library already waiting in the queue starts unticked, so it is not added twice by accident
+        $queued = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        foreach ($q in $script:SpQueue) { if ($q.State -in 'Waiting', 'Running') { foreach ($l in @($q.Libraries)) { [void]$queued.Add($l.Id) } } }
+        $script:SpChecked = [bool[]]@($script:SpLibs | ForEach-Object { -not $_.System -and -not $queued.Contains($_.Id) })
         Update-SpTree
+        if (@($r.Failed).Count) { Show-Message ("These sites could not be loaded. The others are listed.`n`n" + (@($r.Failed) -join "`n")) 'Load libraries' 'Warning' }
     }
 }
 
@@ -673,6 +776,212 @@ function Start-SpExport {
             Show-Message "$saved`n`nConnect to the database and click Upload CSV/XLSX to load it." 'Export from SharePoint'
         }
     }
+}
+
+function Open-SpQueue {
+    <# First opening of the window: the list saved by the last session. It waits for Start queue. #>
+    try {
+        $saved = Read-SpQueueFile (Join-Path $AppDir 'sharepoint_queue.json')
+        foreach ($i in @($saved.Items)) { $script:SpQueue.Add($i) }
+        if ($saved.Folder) { $script:SpFolder.Text = $saved.Folder }
+    } catch { Show-Message $_.Exception.Message 'Export queue' 'Warning' }
+    Update-SpQueueList
+}
+
+function Save-SpQueue {
+    try { Save-SpQueueFile (Join-Path $AppDir 'sharepoint_queue.json') $script:SpFolder.Text.Trim() $script:SpQueue.ToArray() }
+    catch { Write-Log 'WARN' "The export queue could not be saved, so it would be lost if the app closes: $($_.Exception.Message)" }
+}
+
+function Update-SpQueueList {
+    <# Fill the list from $script:SpQueue, keeping the selected rows. #>
+    $list = $script:SpQueueList
+    $picked = @($list.SelectedItems | ForEach-Object { $_.Tag })
+    $list.BeginUpdate()
+    try {
+        $list.Items.Clear()
+        foreach ($q in $script:SpQueue) {
+            $row = New-Object Windows.Forms.ListViewItem([string]$q.State)
+            $row.Tag = $q.Id
+            $sites = @($q.Libraries | ForEach-Object { $_.WebUrl } | Select-Object -Unique)
+            $site = ([Uri]$sites[0]).AbsolutePath + $(if ($sites.Count -gt 1) { " + $($sites.Count - 1) more" })
+            foreach ($v in $q.FileName, $site, @($q.Libraries).Count, ('{0:N0}' -f [long]$q.Items), $q.Detail) { [void]$row.SubItems.Add([string]$v) }
+            $row.ForeColor = switch ($q.State) { 'Running' { $ColorOrange } 'Failed' { $ColorError } 'Done' { $ColorGray } default { $ColorWhite } }
+            $row.Selected = $picked -contains $q.Id
+            [void]$list.Items.Add($row)
+        }
+    } finally { $list.EndUpdate() }
+    Update-SpQueueState
+}
+
+function Update-SpQueueState {
+    $waiting = @($script:SpQueue | Where-Object { $_.State -eq 'Waiting' }).Count
+    $script:SpQueueStart.Enabled = -not $script:SpQueueOn
+    $script:SpQueuePause.Enabled = $script:SpQueueOn
+    if ($script:SpQueueJob) { return }                                  # the running export writes this line
+    $done = @($script:SpQueue | Where-Object { $_.State -eq 'Done' }).Count
+    $failed = @($script:SpQueue | Where-Object { $_.State -eq 'Failed' }).Count
+    $text = "$waiting waiting, $done done, $failed failed"
+    $script:SpQueueStatus.Text = if ($script:SpQueueOn) { "Queue is on: anything you add runs next.  $text" }
+                                 elseif ($waiting) { "Click Start queue to run them.  $text" } else { $text }
+    $script:SpQueueBar.Visible = $false
+}
+
+function Add-SpQueueItem {
+    <# The ticked libraries and the export name become one row of the queue; the ticks clear, ready for the next export. #>
+    if (-not $script:SpLibs) { Show-Message 'Load the libraries first.' 'Add to queue' 'Warning'; return }
+    $sel = @(for ($i = 0; $i -lt $script:SpLibs.Count; $i++) { if ($script:SpChecked[$i]) { $script:SpLibs[$i] } })
+    if (-not $sel.Count) { Show-Message 'Tick at least one library.' 'Add to queue' 'Warning'; return }
+    $name = $script:SpFileName.Text.Trim()
+    try { [void](Expand-SpFileName $name) } catch { Show-Message $_.Exception.Message 'Export name' 'Warning'; return }
+    if ($name -notmatch '\.(xlsx|csv)$') { $name += '.xlsx' }
+    $folder = $script:SpFolder.Text.Trim()
+    if (-not [IO.Path]::IsPathRooted($folder) -or -not (Test-Path -LiteralPath $folder -PathType Container)) {
+        Show-Message "This folder does not exist:`n$folder" 'Save in folder' 'Warning'; return
+    }
+    $items = [long]0
+    foreach ($l in $sel) { $items += [long]$l.ItemCount }
+    # found out only after hours of reading otherwise. Items include folders, so this is a warning, not a stop.
+    if ($name -match '\.xlsx$' -and $items -ge 1048575 -and
+        [Windows.Forms.MessageBox]::Show($script:SpForm, ("These libraries hold {0:N0} items, and one Excel sheet holds 1,048,575 rows. Folders don't count, but if the files don't fit, this export fails at the end.`n`nEnd the name with .csv to avoid that.`n`nAdd it as Excel anyway?" -f $items), 'Add to queue', 'YesNo', 'Warning') -ne 'Yes') { return }
+    $user = ''; $secret = ''
+    $c = $script:SpSession.Credential
+    if ($c) {
+        $user = if ($c.Domain) { "$($c.Domain)\$($c.UserName)" } else { $c.UserName }
+        $secret = ConvertFrom-SecureString $c.SecurePassword
+    }
+    $script:SpQueue.Add([pscustomobject]@{
+        Id = [guid]::NewGuid().ToString(); State = 'Waiting'; Detail = ''; FileName = $name; Folder = $folder
+        SiteUrl = $sel[0].WebUrl; User = $user; Password = $secret; Items = $items
+        Libraries = @($sel | ForEach-Object { [pscustomobject]@{ WebUrl = $_.WebUrl; WebTitle = $_.WebTitle; Id = $_.Id; Title = $_.Title } })
+    })
+    Save-SpQueue
+    Write-Log 'Queue' "Added $name`: $($sel.Count) libraries, about $($items.ToString('N0')) items, saved in $folder"
+    for ($i = 0; $i -lt $script:SpChecked.Count; $i++) { $script:SpChecked[$i] = $false }
+    Update-SpTree
+    Update-SpQueueList
+    [void]$script:SpFileName.Focus()
+    $script:SpFileName.SelectAll()
+    Start-SpQueueNext
+}
+
+function Start-SpQueue {
+    $script:SpQueueOn = $true
+    foreach ($q in $script:SpQueue) { if ($q.State -eq 'Stopped') { $q.State = 'Waiting'; $q.Detail = 'Continues from its last saved page' } }
+    Update-SpQueueList
+    Start-SpQueueNext
+}
+
+function Stop-SpQueue([switch] $Now) {
+    $script:SpQueueOn = $false
+    Update-SpQueueState
+    if ($Now -and $script:SpQueueJob) {
+        $script:SpQueueStopping = $true
+        $script:SpQueueStatus.Text = 'Stopping: the request it is waiting on has to end first...'
+        [void]$script:SpQueueJob.PS.BeginStop($null, $null)
+    }
+}
+
+function Start-SpQueueNext {
+    <# Start the first waiting row, unless one is running or the queue is paused. #>
+    if (-not $script:SpQueueOn -or $script:SpQueueJob) { return }
+    $next = @($script:SpQueue | Where-Object { $_.State -eq 'Waiting' }) | Select-Object -First 1
+    if (-not $next) { Update-SpQueueState; return }
+    $next.State = 'Running'; $next.Detail = 'Progress is shown below the list'
+    $script:SpQueueItem = $next
+    $script:SpQueueStopping = $false
+    Write-Log 'Queue' "Starting $($next.FileName)"
+    try {
+        $script:SpQueueJob = New-MhWorker 'Queue' -Arg @{ Job = $next; LogDir = (Join-Path $AppDir 'logs') } -StatusKind 'qstatus' -Body {
+            param($Db, $Arg, $Log, $Status)
+            # one log per export: everything in full; the main window gets shortened lines
+            [void][IO.Directory]::CreateDirectory($Arg.LogDir)
+            $stem = [IO.Path]::GetFileNameWithoutExtension((Expand-SpFileName $Arg.Job.FileName))
+            $file = Join-Path $Arg.LogDir ('sharepoint_queue_{0}_{1:yyyyMMdd_HHmmss}.log' -f $stem, (Get-Date))
+            $write = { param($m) [IO.File]::AppendAllText($file, ('[{0:yyyy-MM-dd HH:mm:ss}] {1}{2}' -f (Get-Date), $m, "`r`n")); & $Log $m }.GetNewClosure()
+            $requests = {
+                param($m)
+                [IO.File]::AppendAllText($file, ('[{0:yyyy-MM-dd HH:mm:ss}] {1}{2}' -f (Get-Date), $m, "`r`n"))
+                & $Log $(if ($m.Length -gt 220) { $m.Substring(0, 220) + '...' } else { $m })
+            }.GetNewClosure()
+            $progress = { param($percent, $text) & $Status $text $percent }.GetNewClosure()
+            & $write "Export $($Arg.Job.FileName): $(@($Arg.Job.Libraries).Count) libraries"
+            try { Set-SpKeepAwake } catch { & $write "Could not stop the PC from sleeping: $($_.Exception.Message)" }
+            try { Invoke-SpJobExport -Job $Arg.Job -Log $write -RequestLog $requests -Progress $progress }
+            catch { & $write "FAILED: $($_.Exception.Message)"; throw }
+        }
+    } catch {
+        $next.State = 'Failed'; $next.Detail = $_.Exception.Message
+        $script:SpQueueItem = $null
+        Write-Log 'ERROR' "Queue: $($next.FileName): $($_.Exception.Message)"
+        Save-SpQueue
+        Update-SpQueueList
+        return
+    }
+    Save-SpQueue
+    Update-SpQueueList
+}
+
+function Show-SpQueueProgress([string] $Text, $Percent) {
+    $script:SpQueueStatus.Text = "$($script:SpQueueItem.FileName):  $Text"
+    if ($null -ne $Percent) {
+        $script:SpQueueBar.Value = [Math]::Max(0, [Math]::Min(100, [int][double]$Percent))
+        $script:SpQueueBar.Visible = $true
+    }
+    # the main window shows it too, unless it is busy with a job of its own
+    if (-not $script:Job) { Set-Status $script:SpQueueStatus.Text }
+}
+
+function Complete-SpQueueItem {
+    <# A running export ended: record how, then start the next row. One failure does not stop the others. #>
+    $j = $script:SpQueueJob; $q = $script:SpQueueItem
+    $stopped = $script:SpQueueStopping
+    $script:SpQueueJob = $null; $script:SpQueueItem = $null; $script:SpQueueStopping = $false
+    try { $res = @($j.PS.EndInvoke($j.Handle)) | Select-Object -Last 1 }
+    catch { $res = @{ Ok = $false; Error = $_.Exception.Message } }
+    if (-not $res) { $res = @{ Ok = $false; Error = 'the export ended without a result' } }
+    $j.PS.Dispose()
+    $j.Runspace.Dispose()
+    if ($stopped -and -not $res.Ok) {
+        $q.State = 'Stopped'; $q.Detail = 'Stopped. Start queue continues it from its last saved page.'
+        Write-Log 'Queue' "Stopped $($q.FileName)"
+    } elseif ($res.Ok) {
+        $r = $res.Result
+        $q.State = 'Done'
+        $q.Detail = ('{0:N0} files, saved to {1}' -f $r.files, $r.path) + $(if ($r.missing) { "  |  $($r.missing) libraries could not be read: see the log" })
+        Write-Log 'Queue' "Done $($q.FileName): $($q.Detail)"
+    } else {
+        $q.State = 'Failed'; $q.Detail = (([string]$res.Error).Trim() -split '\r?\n')[0]
+        Write-Log 'ERROR' "Queue: $($q.FileName): $(([string]$res.Error).Trim())"
+    }
+    if (-not $script:Job) { Set-Status '' }
+    Save-SpQueue
+    Update-SpQueueList
+    Start-SpQueueNext
+}
+
+function Get-SpQueueSelected {
+    $ids = @($script:SpQueueList.SelectedItems | ForEach-Object { $_.Tag })
+    if (-not $ids.Count) { Show-Message 'Click a row in the queue first.' 'Export queue' 'Warning' }
+    @($script:SpQueue | Where-Object { $ids -contains $_.Id })
+}
+
+function Reset-SpQueueItems {
+    <# Failed or stopped rows wait again; what they already read is kept. #>
+    foreach ($q in @(Get-SpQueueSelected)) {
+        if ($q.State -in 'Failed', 'Stopped') { $q.State = 'Waiting'; $q.Detail = 'Continues from its last saved page' }
+    }
+    Save-SpQueue
+    Update-SpQueueList
+    Start-SpQueueNext
+}
+
+function Remove-SpQueueItems([switch] $Finished) {
+    $gone = if ($Finished) { @($script:SpQueue | Where-Object { $_.State -eq 'Done' }) }
+            else { @(Get-SpQueueSelected | Where-Object { $_.State -ne 'Running' }) }
+    foreach ($q in $gone) { [void]$script:SpQueue.Remove($q) }
+    Save-SpQueue
+    Update-SpQueueList
 }
 
 function Update-SpScheduleList {
@@ -813,27 +1122,37 @@ function Start-SpCompare {
     <# Combined export against a folder of per-library CSV scans (no database needed). #>
     if (-not (Get-Module -ListAvailable ImportExcel)) { Show-ImportExcelHelp; return }
     $dlg = New-Object Windows.Forms.OpenFileDialog
-    $dlg.Title = 'Compare: choose the combined SharePoint export'
+    $dlg.Title = 'Compare: choose one or more combined SharePoint exports (Ctrl/Shift for several)'
     $dlg.Filter = 'SharePoint export (*.xlsx;*.xlsm;*.csv)|*.xlsx;*.xlsm;*.csv|All files (*.*)|*.*'
+    $dlg.Multiselect = $true
     if ($dlg.ShowDialog($form) -ne 'OK') { return }
-    $workbook = $dlg.FileName
-    $dir = [IO.Path]::GetDirectoryName($workbook)
+    $workbooks = @($dlg.FileNames | Where-Object { [IO.Path]::GetFileName($_) -notlike 'sharepoint_compare_*' })
+    if (-not $workbooks.Count) { Show-Message 'Choose an export, not a compare report.' 'Compare'; return }
+    $dir = [IO.Path]::GetDirectoryName($workbooks[0])
     $pick = New-Object Windows.Forms.FolderBrowserDialog
-    $pick.Description = 'Compare: choose the folder with the per-library CSV files (subfolders are included)'
+    $pick.Description = 'Compare: choose the folder with the per-library CSV files (subfolders are included). Each export is compared with the CSV folders of its own sites.'
     $pick.ShowNewFolderButton = $false
     $pick.SelectedPath = $dir
     if ($pick.ShowDialog($form) -ne 'OK') { return }
-    $report = Join-Path $dir "sharepoint_compare_$(Get-Date -Format 'yyyyMMdd_HHmmss').xlsx"
-    Start-MhJob 'Compare' -NoConnection -Arg @{ Workbook = $workbook; Folder = $pick.SelectedPath; Report = $report } -Body {
+    $values = Confirm-Action ("Also compare the value of every column, file by file?`n`nYes: adds the Value check sheets (takes longer).`nNo: files and columns only.") 'Compare'
+    Start-MhJob 'Compare' -NoConnection -Arg @{ Workbooks = $workbooks; Folder = $pick.SelectedPath; Reports = $dir; NoValues = -not $values } -Body {
         param($Db, $Arg, $Log, $Status)
         $progress = { param($n, $file) & $Status ('Compare: {0:N0} rows read ({1})...' -f $n, $file) }.GetNewClosure()
-        Compare-SpExport -WorkbookPath $Arg.Workbook -CsvFolder $Arg.Folder -ReportPath $Arg.Report -Log $Log -Progress $progress
+        Invoke-SpCompareSet -WorkbookPaths $Arg.Workbooks -CsvFolder $Arg.Folder -ReportFolder $Arg.Reports -Log $Log -Progress $progress -NoValues:$Arg.NoValues
     } -OnDone {
-        param($r)
-        Show-Grid $r.View 'Compare by library'
-        $text = ("{0}`n`nIn both: {1:N0}`nMissing from workbook: {2:N0} content, {3:N0} system`nOnly in workbook: {4:N0}`n" +
-                 "Problems: {5:N0}`n`n{7}`n`nReport: {6}`n`nOpen the report now?") -f $r.Verdict, $r.in_both, $r.missing_content, $r.missing_system, $r.only_in_workbook, $r.problems, $r.Path, $r.ColumnResult
-        if (Confirm-Action $text 'Compare') { Start-Process -FilePath $r.Path }
+        param($set)
+        $r = $set.Single
+        if ($r) {
+            Show-Grid $r.View 'Compare by library'
+            $text = ("{0}`n`nIn both: {1:N0}`nMissing from workbook: {2:N0} content, {3:N0} system`nOnly in workbook: {4:N0}`n" +
+                     "Problems: {5:N0}`n`n{7}`n`n{8}`n`nReport: {6}`n`nOpen the report now?") -f $r.Verdict, $r.in_both, $r.missing_content, $r.missing_system, $r.only_in_workbook, $r.problems, $r.Path, $r.ColumnResult, $r.ValueResult
+            if (Confirm-Action $text 'Compare') { Start-Process -FilePath $r.Path }
+        } else {
+            Show-Grid $set.View 'Compare by export'
+            if ($set.Path -and (Confirm-Action ("$($set.Rows.Count) export(s) compared. One report per export is next to the exports.`n`nSummary: $($set.Path)`n`nOpen the summary now?") 'Compare')) {
+                Start-Process -FilePath $set.Path
+            }
+        }
     }
 }
 
@@ -932,6 +1251,7 @@ $toolbar = New-Flow $ColorDark
 $toolbar.Controls.Add((New-Button 'Export from SharePoint' (Col '#B35C00') { Show-SharePointExport }))
 $toolbar.Controls.Add((New-Button 'Compare with CSV folder' (Col '#8A6D1A') { Start-SpCompare }))
 $toolbar.Controls.Add((New-Button 'Upload CSV/XLSX' $ColorOrange { Start-Upload } -Bold -Fore ([Drawing.Color]::Black)))
+$toolbar.Controls.Add((New-Button 'Upload CSV folder' $ColorOrange { Start-UploadFolder } -Bold -Fore ([Drawing.Color]::Black)))
 $toolbar.Controls.Add((New-Button 'Create / Sync Table' $ColorBlue { Start-Sync }))
 $toolbar.Controls.Add((New-Button 'Convert existing Metadata' (Col '#1A6B5A') { Start-Convert }))
 $toolbar.Controls.Add((New-Button 'Build Matrix' (Col '#6A3D8A') { Start-Matrix }))
@@ -1000,17 +1320,25 @@ $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 100
 $timer.Add_Tick({
     $done = $script:Job -and $script:Job.Handle.IsCompleted
+    $queueDone = $script:SpQueueJob -and $script:SpQueueJob.Handle.IsCompleted
     $item = $null
     while ($Sync.Queue.TryDequeue([ref]$item)) {
         if ($item[0] -eq 'log') { Write-Log $item[1] $item[2] }
+        elseif ($item[0] -eq 'qstatus') { if ($script:SpQueueItem) { Show-SpQueueProgress $item[1] $item[2] } }
         elseif ($null -ne $item[2]) { Update-JobBar $item[2] $item[1] }
         else { Set-Status $item[1] }
     }
+    if ($queueDone) { Complete-SpQueueItem }
     if ($done) { Complete-MhJob } else { Show-JobElapsed }
 })
 
 $form.Add_FormClosing({
     param($sender, $e)
+    if ($script:SpQueueJob -and -not (Confirm-Action ("The SharePoint export queue is running ($($script:SpQueueItem.FileName)). If you close now it stops. " +
+            "The list is kept: open the SharePoint window and click Start queue, and it continues from the last saved page.`n`nClose anyway?") 'Metadata Horizontal')) {
+        $e.Cancel = $true
+        return
+    }
     if ($script:Job -and -not (Confirm-Action ("A job is still running ($($script:Job.Title)). If you close now it either " +
             "finishes in the background or is rolled back by the server as a whole.`n`nClose anyway?") 'Metadata Horizontal')) {
         $e.Cancel = $true

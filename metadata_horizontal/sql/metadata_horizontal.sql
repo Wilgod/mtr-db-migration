@@ -1,4 +1,4 @@
--- Reference DDL for the default config.json (30 columns). The program creates/extends the
+-- Reference DDL for the default config.json (45 columns). The program creates/extends the
 -- table itself from config.json (Create / Sync Table); this file is for review / DBA use.
 -- In a DB that has the consolidation's "Sites" table, the program also adds "SiteId" + FK + trigger.
 
@@ -36,6 +36,21 @@ CREATE TABLE IF NOT EXISTS public."MetadataHorizontal" (
     "FileDescription" varchar(4000),
     "GUID" varchar(4000),
     "UniqueId" varchar(4000),
+    "CreatedBy" varchar(4000),
+    "CreatedByAccount" varchar(4000),
+    "CreatedDate" varchar(4000),
+    "ModifiedBy" varchar(4000),
+    "ModifiedByAccount" varchar(4000),
+    "ModifiedDate" varchar(4000),
+    "FolderPath" varchar(4000),
+    "ProjectRecordRequestBy" varchar(4000),
+    "ProjectRecordRequestTime" varchar(4000),
+    "OriginalSharePointPath" varchar(4000),
+    "SourceItemId" varchar(4000),
+    "SharePointVersion" varchar(4000),
+    "FileSize" varchar(4000),
+    "DocumentLibrary" varchar(4000),
+    "LibraryId" varchar(4000),
     "SourceFile" varchar(1000),
     "ImportedAt" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "UpdatedAt" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP

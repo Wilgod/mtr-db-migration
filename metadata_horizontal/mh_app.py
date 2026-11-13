@@ -113,6 +113,8 @@ class MetadataHorizontalApp(ctk.CTk):
         tb.grid(row=1, column=0, sticky="ew", padx=8, pady=2)
         ctk.CTkButton(tb, text="⬆  Upload CSV/XLSX", width=170, fg_color=COLOR_ORANGE, text_color="black",
                       font=ctk.CTkFont(weight="bold"), command=self._upload).pack(side="left", padx=4)
+        ctk.CTkButton(tb, text="Upload CSV folder", width=150, fg_color=COLOR_ORANGE, text_color="black",
+                      font=ctk.CTkFont(weight="bold"), command=self._upload_folder).pack(side="left", padx=4)
         ctk.CTkButton(tb, text="Create / Sync Table", width=150, fg_color=COLOR_BLUE,
                       command=self._ensure).pack(side="left", padx=4)
         ctk.CTkButton(tb, text="⇄  Convert existing Metadata", width=210, fg_color="#1a6b5a",
@@ -300,6 +302,29 @@ class MetadataHorizontalApp(ctk.CTk):
             return mh.import_file(eng, cfg, path, log=log, report_dir=report_dir,
                                   progress=lambda n: self._set_status(f"Upload: {n:,} rows read…"))
         self._run("Upload", job, then_view=True)
+
+    def _upload_folder(self):
+        path = filedialog.askdirectory(title="Upload every CSV in this folder (subfolders are included)")
+        if not path:
+            return
+        count = len(mh.csv_files(path))
+        if not count:
+            messagebox.showwarning("Upload CSV folder", f"No .csv files found in {path}")
+            return
+        if not messagebox.askyesno(
+                "Upload CSV folder",
+                f"Upload {count} CSV file(s) from {path}?\n\n"
+                "Each file is loaded in its own transaction. New values replace what the table holds for the "
+                "same file, so uploading an older scan over a newer export brings the older values back."):
+            return
+        folder = self._app_config.get("UnmatchedReportFolder") or "logs"
+        report_dir = folder if os.path.isabs(folder) else os.path.join(mh.BASE_DIR, folder)
+
+        def job(eng, cfg, log):
+            return mh.import_folder(eng, cfg, path, log=log, report_dir=report_dir,
+                                    progress=lambda n, i, total, f: self._set_status(
+                                        f"Upload folder: file {i:,} of {total:,}, {n:,} rows read ({f})"))
+        self._run("Upload folder", job, then_view=True)
 
     def _convert(self):
         remove = self._remove_var.get()

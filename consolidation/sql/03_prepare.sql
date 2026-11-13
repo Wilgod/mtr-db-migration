@@ -22,6 +22,13 @@ CREATE TABLE _merge.loaded_table (
     row_count bigint NOT NULL
 );
 
+CREATE TABLE _merge.loaded_source (
+    table_name text NOT NULL REFERENCES _merge.table_plan,
+    source_db varchar(64) NOT NULL REFERENCES _merge.source,
+    loaded_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (table_name, source_db)
+);
+
 -- ===== 1. ID offsets ======================================================
 INSERT INTO _merge.id_offset (table_name, source_db, id_offset, src_max_id)
 SELECT 'Files', src, COALESCE(SUM(mx) OVER (ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0), mx
@@ -269,122 +276,123 @@ END $$;
 
 -- ===== 2. Sites: every distinct non-empty SiteName from every source table =====
 -- (GROUP BY is pushed down to the source server, so only the distinct names travel)
-INSERT INTO public."Sites" ("SiteId", "SiteName")
-SELECT row_number() OVER (ORDER BY n), n FROM (
-    SELECT "SiteName" AS n FROM "src_cwp_ecr"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."Files" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."Metadata" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."Permissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."ADGroups" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."ADGroupMembers" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."PermissionSets" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."FolderPermissions" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."PermissionMatrixSummaries" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."MigrationTasks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp2"."ScanProgress" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."FolderInheritanceBreaks" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."MigrationTasks_Parsed" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_ecr"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj3"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_procon"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj2"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_opspj4"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp_xrl"."Folder_Structure_Final_Analysis" GROUP BY 1
-    UNION SELECT "SiteName" AS n FROM "src_cwp"."Folder_Structure_Final_Analysis" GROUP BY 1
-) u WHERE n IS NOT NULL AND n <> '';
+-- source_db lists every source that has the site, in priority order
+INSERT INTO public."Sites" ("SiteId", "SiteName", source_db)
+SELECT row_number() OVER (ORDER BY n), n, string_agg(src, ', ' ORDER BY o) FROM (
+    SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."Files" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."Metadata" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."Permissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."ADGroups" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."ADGroupMembers" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."PermissionSets" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."FolderPermissions" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."PermissionMatrixSummaries" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."MigrationTasks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 9 AS o, 'cwp2' AS src FROM "src_cwp2"."ScanProgress" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."FolderInheritanceBreaks" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."MigrationTasks_Parsed" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 1 AS o, 'cwp_ecr' AS src FROM "src_cwp_ecr"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 2 AS o, 'cwp_opspj3' AS src FROM "src_cwp_opspj3"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 3 AS o, 'cwp_opspj' AS src FROM "src_cwp_opspj"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 4 AS o, 'cwp_procon' AS src FROM "src_cwp_procon"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 5 AS o, 'cwp_opspj2' AS src FROM "src_cwp_opspj2"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 6 AS o, 'cwp_opspj4' AS src FROM "src_cwp_opspj4"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 7 AS o, 'cwp_xrl' AS src FROM "src_cwp_xrl"."Folder_Structure_Final_Analysis" GROUP BY 1
+    UNION SELECT "SiteName" AS n, 8 AS o, 'cwp' AS src FROM "src_cwp"."Folder_Structure_Final_Analysis" GROUP BY 1
+) u WHERE n IS NOT NULL AND n <> '' GROUP BY n;
 
 -- new sites added later by the set_site_id() trigger must not reuse an ID
 SELECT setval('public."Sites_SiteId_seq"', COALESCE((SELECT MAX("SiteId") FROM public."Sites"), 0) + 1, false);
@@ -402,7 +410,7 @@ INSERT INTO _merge.table_plan (table_name, load_order, kind, depends_on, sources
     ('FolderPermissions', 9, 'merge rules', ARRAY[]::text[], 'cwp_ecr, cwp_opspj3, cwp_opspj, cwp_procon, cwp_opspj2, cwp_opspj4, cwp_xrl, cwp, cwp2', (SELECT COUNT(*) FROM "src_cwp_ecr"."FolderPermissions") + (SELECT COUNT(*) FROM "src_cwp_opspj3"."FolderPermissions") + (SELECT COUNT(*) FROM "src_cwp_opspj"."FolderPermissions") + (SELECT COUNT(*) FROM "src_cwp_procon"."FolderPermissions") + (SELECT COUNT(*) FROM "src_cwp_opspj2"."FolderPermissions") + (SELECT COUNT(*) FROM "src_cwp_opspj4"."FolderPermissions") + (SELECT COUNT(*) FROM "src_cwp_xrl"."FolderPermissions") + (SELECT COUNT(*) FROM "src_cwp"."FolderPermissions") + (SELECT COUNT(*) FROM "src_cwp2"."FolderPermissions")),
     ('PermissionMatrixSummaries', 10, 'merge rules', ARRAY[]::text[], 'cwp_ecr, cwp_opspj3, cwp_opspj, cwp_procon, cwp_opspj2, cwp_opspj4, cwp_xrl, cwp, cwp2', (SELECT COUNT(*) FROM "src_cwp_ecr"."PermissionMatrixSummaries") + (SELECT COUNT(*) FROM "src_cwp_opspj3"."PermissionMatrixSummaries") + (SELECT COUNT(*) FROM "src_cwp_opspj"."PermissionMatrixSummaries") + (SELECT COUNT(*) FROM "src_cwp_procon"."PermissionMatrixSummaries") + (SELECT COUNT(*) FROM "src_cwp_opspj2"."PermissionMatrixSummaries") + (SELECT COUNT(*) FROM "src_cwp_opspj4"."PermissionMatrixSummaries") + (SELECT COUNT(*) FROM "src_cwp_xrl"."PermissionMatrixSummaries") + (SELECT COUNT(*) FROM "src_cwp"."PermissionMatrixSummaries") + (SELECT COUNT(*) FROM "src_cwp2"."PermissionMatrixSummaries")),
     ('ScanProgress', 11, 'merge rules', ARRAY[]::text[], 'cwp_ecr, cwp_opspj3, cwp_opspj, cwp_procon, cwp_opspj2, cwp_opspj4, cwp_xrl, cwp, cwp2', (SELECT COUNT(*) FROM "src_cwp_ecr"."ScanProgress") + (SELECT COUNT(*) FROM "src_cwp_opspj3"."ScanProgress") + (SELECT COUNT(*) FROM "src_cwp_opspj"."ScanProgress") + (SELECT COUNT(*) FROM "src_cwp_procon"."ScanProgress") + (SELECT COUNT(*) FROM "src_cwp_opspj2"."ScanProgress") + (SELECT COUNT(*) FROM "src_cwp_opspj4"."ScanProgress") + (SELECT COUNT(*) FROM "src_cwp_xrl"."ScanProgress") + (SELECT COUNT(*) FROM "src_cwp"."ScanProgress") + (SELECT COUNT(*) FROM "src_cwp2"."ScanProgress")),
-    ('FolderInheritanceBreaks', 12, 'merge rules', ARRAY['ScanProgress']::text[], 'cwp_ecr, cwp_opspj3, cwp_opspj, cwp_procon, cwp_opspj2, cwp_opspj4, cwp_xrl', (SELECT COUNT(*) FROM "src_cwp_ecr"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_opspj3"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_opspj"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_procon"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_opspj2"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_opspj4"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_xrl"."FolderInheritanceBreaks")),
+    ('FolderInheritanceBreaks', 12, 'merge rules', ARRAY[]::text[], 'cwp_ecr, cwp_opspj3, cwp_opspj, cwp_procon, cwp_opspj2, cwp_opspj4, cwp_xrl', (SELECT COUNT(*) FROM "src_cwp_ecr"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_opspj3"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_opspj"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_procon"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_opspj2"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_opspj4"."FolderInheritanceBreaks") + (SELECT COUNT(*) FROM "src_cwp_xrl"."FolderInheritanceBreaks")),
     ('ActiveLanIds', 13, 'merge rules', ARRAY[]::text[], 'cwp_ecr, cwp_opspj3, cwp_opspj, cwp_procon, cwp_opspj2, cwp_opspj4, cwp_xrl, cwp, cwp2', (SELECT COUNT(*) FROM "src_cwp_ecr"."ActiveLanIds") + (SELECT COUNT(*) FROM "src_cwp_opspj3"."ActiveLanIds") + (SELECT COUNT(*) FROM "src_cwp_opspj"."ActiveLanIds") + (SELECT COUNT(*) FROM "src_cwp_procon"."ActiveLanIds") + (SELECT COUNT(*) FROM "src_cwp_opspj2"."ActiveLanIds") + (SELECT COUNT(*) FROM "src_cwp_opspj4"."ActiveLanIds") + (SELECT COUNT(*) FROM "src_cwp_xrl"."ActiveLanIds") + (SELECT COUNT(*) FROM "src_cwp"."ActiveLanIds") + (SELECT COUNT(*) FROM "src_cwp2"."ActiveLanIds")),
     ('Migration_Operation_Logs', 14, 'merge rules', ARRAY[]::text[], 'cwp_ecr, cwp_opspj3, cwp_opspj, cwp_procon, cwp_opspj2, cwp_opspj4, cwp_xrl, cwp, cwp2', (SELECT COUNT(*) FROM "src_cwp_ecr"."Migration_Operation_Logs") + (SELECT COUNT(*) FROM "src_cwp_opspj3"."Migration_Operation_Logs") + (SELECT COUNT(*) FROM "src_cwp_opspj"."Migration_Operation_Logs") + (SELECT COUNT(*) FROM "src_cwp_procon"."Migration_Operation_Logs") + (SELECT COUNT(*) FROM "src_cwp_opspj2"."Migration_Operation_Logs") + (SELECT COUNT(*) FROM "src_cwp_opspj4"."Migration_Operation_Logs") + (SELECT COUNT(*) FROM "src_cwp_xrl"."Migration_Operation_Logs") + (SELECT COUNT(*) FROM "src_cwp"."Migration_Operation_Logs") + (SELECT COUNT(*) FROM "src_cwp2"."Migration_Operation_Logs")),
     ('Migration_Path_History', 15, 'merge rules', ARRAY['Migration_Operation_Logs']::text[], 'cwp_ecr, cwp_opspj3, cwp_opspj, cwp_procon, cwp_opspj2, cwp_opspj4, cwp_xrl, cwp, cwp2', (SELECT COUNT(*) FROM "src_cwp_ecr"."Migration_Path_History") + (SELECT COUNT(*) FROM "src_cwp_opspj3"."Migration_Path_History") + (SELECT COUNT(*) FROM "src_cwp_opspj"."Migration_Path_History") + (SELECT COUNT(*) FROM "src_cwp_procon"."Migration_Path_History") + (SELECT COUNT(*) FROM "src_cwp_opspj2"."Migration_Path_History") + (SELECT COUNT(*) FROM "src_cwp_opspj4"."Migration_Path_History") + (SELECT COUNT(*) FROM "src_cwp_xrl"."Migration_Path_History") + (SELECT COUNT(*) FROM "src_cwp"."Migration_Path_History") + (SELECT COUNT(*) FROM "src_cwp2"."Migration_Path_History")),
